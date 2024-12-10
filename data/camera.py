@@ -62,6 +62,7 @@ class Camera(nn.Module):
         self.trans = trans
         self.scale = scale
         self.update()
+        self.data_device = self.world_view_transform.device
 
     def update(self):
         self.world_view_transform = torch.tensor(getWorld2View2(self.R, self.T, self.trans, self.scale)).transpose(0, 1).to(self.data_device)

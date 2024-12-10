@@ -10,6 +10,10 @@ def render_alpha_blend_tiles_slang_raw(indices, vertices,
                                        world_view_transform, K, cam_pos,
                                        fovy, fovx, height, width, cell_values=None, tile_size=16):
     torch.cuda.synchronize()
+    assert(indices.device == vertices.device)
+    assert(indices.device == world_view_transform.device)
+    assert(indices.device == K.device)
+    assert(indices.device == cam_pos.device)
     st = time.time()
     
     render_grid = RenderGrid(height,
@@ -169,6 +173,7 @@ class AlphaBlendTiledRender(torch.autograd.Function):
             fovx=fovx,
             tile_height=render_grid.tile_height,
             tile_width=render_grid.tile_width)
+        # ic(rgbs, rgbs_grad)
         
         kernel_with_args.launchRaw(
             blockSize=(render_grid.tile_width, 

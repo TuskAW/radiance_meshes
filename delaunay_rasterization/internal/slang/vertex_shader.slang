@@ -2,6 +2,7 @@
 #define FLT_MIN -1e20
 import utils;
 import spherical_harmonics;
+import intersect;
 
 struct rectangle {
     int32_t min_x;
@@ -98,11 +99,6 @@ void vertex_shader(TensorView<int32_t> indices,
     if (n_tiles == 0) {
         return;
     }
-    // 
-    // float3 test_pt = tet.verts[0];
-    // float3 proj_point = geom_transform_points(test_pt, mul(cam.proj_mat, cam.world_view_transform));
-    // // float3 proj_point = geom_transform_points(test_pt, cam.world_view_transform);
-    // float4 proj_test = mul(mul(cam.proj_mat, cam.world_view_transform), float4(test_pt, 1.f));
 
     // printf("[%f, %f], [%f, %f], (%f, %f, %f). (%f, %f, %f, %f)\n",
     //     //    rect_tile_space.min_x, rect_tile_space.max_x, rect_tile_space.min_y, rect_tile_space.max_y,
@@ -117,8 +113,6 @@ void vertex_shader(TensorView<int32_t> indices,
     //        rect_tile_space.min_x, rect_tile_space.max_x, rect_tile_space.min_y, rect_tile_space.max_y,
     // );
 
-    // float3 circumcenter_camspace = project_point_w_depth(circumcenter, cam);
-
     out_radii[g_idx] = (uint32_t)1;
     out_tiles_touched[g_idx] = n_tiles;
     out_rect_tile_space[uint2(g_idx, 0)] = rect_tile_space.min_x;
@@ -128,8 +122,7 @@ void vertex_shader(TensorView<int32_t> indices,
 
     // out_vs.storeOnce(uint2(g_idx, 0), minv.x);
     // out_vs.storeOnce(uint2(g_idx, 1), minv.y);
-    out_vs.storeOnce(uint2(g_idx, 2), min(max(minv.z, FLT_MIN), FLT_MAX));
-    // out_vs.storeOnce(uint2(g_idx, 2), min(max(maxv.z, FLT_MIN), FLT_MAX));
+    out_vs.storeOnce(uint2(g_idx, 2), min(max(maxv.z, FLT_MIN), FLT_MAX));
 
     out_circumcenter.storeOnce(uint2(g_idx, 0), circumcenter.x);
     out_circumcenter.storeOnce(uint2(g_idx, 1), circumcenter.y);

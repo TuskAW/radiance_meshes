@@ -10,7 +10,7 @@ from delaunay_rasterization.internal.render_grid import RenderGrid
 from delaunay_rasterization.internal.tile_shader_slang import vertex_and_tile_shader
 from pyquaternion import Quaternion
 from icecream import ic
-from jax import jacrev
+from jax import jacrev, grad
 import jax.numpy as jnp
 
 
@@ -159,7 +159,7 @@ def test_tetrahedra_rendering(vertices, indices, rgbs, viewmat, n_samples=10000,
             return img[..., :3].mean()
 
         # Compute JAX gradients using jacrev
-        jax_verts_grad, jax_rgbs_grad = jacrev(render_fn)((
+        jax_verts_grad, jax_rgbs_grad = grad(render_fn)((
             vertices.detach().cpu().numpy(),
             rgbs.detach().cpu().numpy()
         ))

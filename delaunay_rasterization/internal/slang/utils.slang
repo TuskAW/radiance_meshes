@@ -35,11 +35,6 @@ struct Camera : IDifferentiable
     int W;
 }
 
-struct Tetrahedra : IDifferentiable
-{
-    float3[4] verts;
-};
-
 struct SplatTetrahedra : IDifferentiable
 {
     float3[4] verts;
@@ -581,17 +576,3 @@ Ray get_ray(Camera cam, float2 center_pix_coord) {
     ray.o = cam.position;
     return ray;
 }
-
-bool same_side(float3 v1, float3 v2, float3 v3, float3 v4, float3 p) {
-    float3 normal = cross(v2 - v1, v3 - v1);
-    float dot_v4 = dot(normal, v4 - v1);
-    float dot_p = dot(normal, p - v1);
-    return sign(dot_v4) * sign(dot_p) > 0;
-}
-
-bool point_in_tetrahedron(Tetrahedra tet, float3 point) {
-    return (same_side(tet.verts[0], tet.verts[1], tet.verts[2], tet.verts[3], point) &&
-            same_side(tet.verts[1], tet.verts[2], tet.verts[3], tet.verts[0], point) &&
-            same_side(tet.verts[2], tet.verts[3], tet.verts[0], tet.verts[1], point) && 
-            same_side(tet.verts[3], tet.verts[0], tet.verts[1], tet.verts[2], point));
-};

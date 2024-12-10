@@ -8,6 +8,25 @@ float det_3x3(float3 a, float3 b, float3 c) {
     return dot(a, cross(b, c));
 }
 
+bool same_side(float3 v1, float3 v2, float3 v3, float3 v4, float3 p) {
+    float3 normal = cross(v2 - v1, v3 - v1);
+    float dot_v4 = dot(normal, v4 - v1);
+    float dot_p = dot(normal, p - v1);
+    return sign(dot_v4) * sign(dot_p) > 0;
+}
+
+bool point_in_tetrahedron(Tetrahedra tet, float3 point) {
+    return (same_side(tet.verts[0], tet.verts[1], tet.verts[2], tet.verts[3], point) &&
+            same_side(tet.verts[1], tet.verts[2], tet.verts[3], tet.verts[0], point) &&
+            same_side(tet.verts[2], tet.verts[3], tet.verts[0], tet.verts[1], point) && 
+            same_side(tet.verts[3], tet.verts[0], tet.verts[1], tet.verts[2], point));
+};
+
+struct Tetrahedra : IDifferentiable
+{
+    float3[4] verts;
+};
+
 [Differentiable]
 bool ray_triangle_intersect(in float3 ray_origin, 
                              in float3 ray_vector, 
@@ -73,6 +92,13 @@ float ray_tetrahedron_intersect(float3 orig, float3 dir, float3 v0, float3 v1, f
         t_enter = min(t_enter, t);
         t_exit = max(t_exit, t);
     }
+    /*
+    float3[4] vs = {v0, v1, v2, v3};
+    Tetrahedra tet = {vs};
+    if (point_in_tetrahedron(tet, orig)) {
+        t_enter = 0;
+    }
+    */
     /*
     if (hit) {
         printf("t: [%f, %f], r_o: (%f, %f, %f), r_d: (%f, %f, %f)\n", t_enter, t_exit, 

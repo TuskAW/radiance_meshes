@@ -33,7 +33,12 @@ float4 update_pixel_state(float4 pixel_state_t_nm1, float4 gauss_rgba_t_n)
 
 float4 undo_pixel_state(float4 pixel_state_t_n, float4 gauss_rgba_t_n)
 {
-    float transmittance_t_nm1 = safe_div(pixel_state_t_n.a, (1 - gauss_rgba_t_n.a));
+    float transmittance_t_nm1;
+    if (1 - gauss_rgba_t_n.a < 1e-3) {
+        transmittance_t_nm1 = 1;
+    } else {
+        transmittance_t_nm1 = safe_div(pixel_state_t_n.a, (1 - gauss_rgba_t_n.a));
+    }
     float3 color_t_nm1 = pixel_state_t_n.rgb - gauss_rgba_t_n.rgb * transmittance_t_nm1;
     return float4(color_t_nm1, transmittance_t_nm1);
 }
@@ -133,6 +138,8 @@ void bwd_alpha_blend(TensorView<int32_t> sorted_gauss_idx,
     uint32_t block_size = tile_height * tile_width;
     const int rounds = ((tile_idx_end - tile_idx_start + block_size - 1) / block_size);
 
+    bool print = false;//pix_coord.x == 0 && pix_coord.y == 0;
+
     int splats_left_to_process = tile_idx_end - tile_idx_start;
     uint32_t current_splat_offset = tile_idx_end - tile_idx_start;
 
@@ -178,6 +185,9 @@ void bwd_alpha_blend(TensorView<int32_t> sorted_gauss_idx,
                 float4 tetra_rgba = evaluate_tetra(g, ray.o, ray.d);
 
                 // Undo pixel state
+                if (print) {
+                    printf("1st Pixel State: %f, %f, %f, %f\n", current_pixel_state.x, current_pixel_state.y, current_pixel_state.z, current_pixel_state.w);
+                }
                 current_pixel_state = undo_pixel_state(current_pixel_state, tetra_rgba);
 
                 // Back-prop automatically through blending and gaussian evaluation.
@@ -188,8 +198,20 @@ void bwd_alpha_blend(TensorView<int32_t> sorted_gauss_idx,
                 DifferentialPair<float4> dp_current_pixel_state = diffPair(current_pixel_state);
 
                 bwd_diff(update_pixel_state)(dp_current_pixel_state, dp_tetra_rgba, d_current_pixel_state);
+                if (print) {
+                    printf("Pixel State: %f, %f, %f, %f\n", dp_current_pixel_state.p.x, dp_current_pixel_state.p.y, dp_current_pixel_state.p.z, dp_current_pixel_state.p.w);
+                    printf("Tetra RGBA: %f, %f, %f, %f\n", tetra_rgba.x, tetra_rgba.y, tetra_rgba.z, tetra_rgba.w);
+                    printf("D Pixel State: %f, %f, %f, %f\n", dp_current_pixel_state.d.x, dp_current_pixel_state.d.y, dp_current_pixel_state.d.z, dp_current_pixel_state.d.w);
+                    printf("D RGBA: %f, %f, %f, %f\n", dp_tetra_rgba.d.x, dp_tetra_rgba.d.y, dp_tetra_rgba.d.z, dp_tetra_rgba.d.w);
+                }
                 d_current_pixel_state = dp_current_pixel_state.getDifferential();
                 bwd_diff(evaluate_tetra)(dp_g, dp_ray_o, dp_ray_d, dp_tetra_rgba.d);
+                if (print) {
+                    printf("D V0: %f, %f, %f\n", dp_g.d.verts[0].x, dp_g.d.verts[0].y, dp_g.d.verts[0].z);
+                    printf("D V1: %f, %f, %f\n", dp_g.d.verts[1].x, dp_g.d.verts[1].y, dp_g.d.verts[1].z);
+                    printf("D V2: %f, %f, %f\n", dp_g.d.verts[2].x, dp_g.d.verts[2].y, dp_g.d.verts[2].z);
+                    printf("D V3: %f, %f, %f\n", dp_g.d.verts[3].x, dp_g.d.verts[3].y, dp_g.d.verts[3].z);
+                }
                 bwd_diff(load_tet_alphablend)(g_idx, vertices, indices, rgbs, dp_g.d);
             }
         }
