@@ -135,7 +135,7 @@ bool ray_triangle_intersect2(in float3 ray_origin,
                              in float3 tri_c,
                              out float t)
 {
-    // t = -1;
+    t = -1;
     float3 edge1 = tri_b - tri_a;
     float3 edge2 = tri_c - tri_a;
     float3 ray_cross_e2 = cross(ray_vector, edge2);

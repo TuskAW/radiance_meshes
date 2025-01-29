@@ -56,8 +56,10 @@ def vertex_and_tile_shader(indices,
         behind_mask = z_val < min_tet_z
         tiles_touched[behind_mask] = 0
         rect_tile_space[behind_mask, :] = 0
-        vs_tetra[:, 2] -= min_tet_z
+        vs_tetra[:, 2] -= vs_tetra[~behind_mask, 2].min()
         vs_tetra[behind_mask, 2] = 0
+    else:
+        vs_tetra[:, 2] -= vs_tetra[:, 2].min()
 
     with torch.no_grad():
         # w = rect_tile_space[:, 2] - rect_tile_space[:, 0]
@@ -124,11 +126,10 @@ def vertex_and_tile_shader(indices,
                 blockSize=(256, 1, 1),
                 gridSize=(ceil_div(total_size_index_buffer, 256).item(), 1, 1)
         )
-        s = (sorted_keys==0).sum()
-        if s > 1:
-            tile_ranges[0, 0] = s-1
-        torch.cuda.synchronize()
-        tlen = tile_ranges[:, 1] - tile_ranges[:, 0]
+        # s = (sorted_keys==0).sum()
+        # if s > 1:
+        #     tile_ranges[0, 0] = s-1
+        # torch.cuda.synchronize()
         # ic(tlen.min(), tlen.max(), tlen.float().mean(), tile_ranges, sorted_keys)
         # if tile_ranges[-1, 1] != total_size_index_buffer:
         #     tlen = tile_ranges[:, 1] - tile_ranges[:, 0]

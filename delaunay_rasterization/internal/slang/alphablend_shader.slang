@@ -88,13 +88,7 @@ float4 alpha_blend(TensorView<int32_t> sorted_gauss_idx,
         int splat_pointer_offset = i * block_size + thread_rank;
         if (tile_idx_start + splat_pointer_offset < tile_idx_end)
         {
-            if (tile_idx_start + splat_pointer_offset >= sorted_gauss_idx.size(0)) {
-                printf("WTF2");
-            }
             uint32_t coll_id = uint32_t(sorted_gauss_idx[tile_idx_start + splat_pointer_offset]);
-            if (coll_id >= indices.size(0)) {
-                printf("WTF");
-            }
             collected_splats[thread_rank] = load_tet_alphablend(coll_id, vertices, indices, rgbs);
         }
         AllMemoryBarrierWithGroupSync();
