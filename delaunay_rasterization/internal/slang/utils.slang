@@ -620,7 +620,7 @@ float3x3 construct_view_matrix(float4x4 viewmatrix)
 }
 
 [Differentiable]
-Ray get_ray(Camera cam, float2 center_pix_coord) {
+Ray get_ray(Camera cam, float2 center_pix_coord, float min_t) {
     float3x3 V = construct_view_matrix(cam.world_view_transform);
     Ray ray;
     // Construct pixel ray in camera space
@@ -633,7 +633,7 @@ Ray get_ray(Camera cam, float2 center_pix_coord) {
         1.0
     )));
     
-    ray.o = cam.position;
+    ray.o = cam.position + ray.d * min_t;
     return ray;
 }
 

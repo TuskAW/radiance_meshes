@@ -125,7 +125,7 @@ def safe_sin(x):
     return safe_trig_helper(x, torch.sin)
 
 
-def render(camera: Camera, model, register_tet_hook=False, tile_size=16):
+def render(camera: Camera, model, register_tet_hook=False, tile_size=16, min_t=0.1):
     fy = fov2focal(camera.fovy, camera.image_height)
     fx = fov2focal(camera.fovx, camera.image_width)
     K = torch.tensor([
@@ -195,6 +195,7 @@ def render(camera: Camera, model, register_tet_hook=False, tile_size=16):
         world_view_transform,
         K,
         cam_pos,
+        min_t,
         camera.fovy,
         camera.fovx)
     # torch.cuda.synchronize()

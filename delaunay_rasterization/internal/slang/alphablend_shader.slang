@@ -51,6 +51,7 @@ float4 alpha_blend(TensorView<int32_t> sorted_gauss_idx,
                    DiffTensorView final_pixel_state,
                    TensorView<int32_t> n_contributors,
                    no_diff Camera cam,
+                   no_diff float min_t,
                    uint32_t2 pix_coord,
                    uint32_t tile_idx_start,
                    uint32_t tile_idx_end,
@@ -73,7 +74,7 @@ float4 alpha_blend(TensorView<int32_t> sorted_gauss_idx,
     //bool print = thread_rank == 0;
     bool print = false;
 
-    Ray ray = get_ray(cam, center_pix_coord);
+    Ray ray = get_ray(cam, center_pix_coord, min_t);
     // if (print) {
     //     printf("ray_o: %f, %f, %f, ray_d: %f, %f, %f\n", ray.o.x, ray.o.y, ray.o.z, ray.d.x, ray.d.y, ray.d.z);
     // }
@@ -133,6 +134,7 @@ void bwd_alpha_blend(TensorView<int32_t> sorted_gauss_idx,
                      DiffTensorView final_pixel_state,
                      TensorView<int32_t> n_contributors,
                      Camera cam,
+                     no_diff float min_t,
                      uint32_t2 pix_coord,
                      uint32_t tile_idx_start,
                      uint32_t tile_idx_end,
@@ -164,7 +166,7 @@ void bwd_alpha_blend(TensorView<int32_t> sorted_gauss_idx,
 
     float2 center_pix_coord = pix_coord;
 
-    Ray ray = get_ray(cam, center_pix_coord);
+    Ray ray = get_ray(cam, center_pix_coord, min_t);
 
     DifferentialPair<float2> dp_center_pix_coord = diffPair(center_pix_coord);
 
@@ -246,6 +248,7 @@ void splat_tiled(TensorView<int32_t> sorted_gauss_idx,
                  TensorView<float> world_view_transform,
                  TensorView<float> K,
                  TensorView<float> cam_pos,
+                 no_diff float min_t,
                  no_diff float fovy,
                  no_diff float fovx,
                  int tile_height,
@@ -270,6 +273,7 @@ void splat_tiled(TensorView<int32_t> sorted_gauss_idx,
                                      output_img,
                                      n_contributors,
                                      cam,
+                                     min_t,
                                      pix_coord,
                                      tile_idx_start,
                                      tile_idx_end,

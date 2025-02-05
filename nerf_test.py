@@ -9,7 +9,6 @@ sys.path.append(str(Path(os.path.abspath('')).parent))
 print(str(Path(os.path.abspath('')).parent))
 import math
 import torch
-from torch import nn
 import matplotlib.pyplot as plt
 import mediapy
 from icecream import ic
@@ -20,30 +19,47 @@ from tqdm import tqdm
 import numpy as np
 from utils import cam_util
 from utils.train_util import *
-from models.vertex_color import Model, TetOptimizer
-# from models.ingp_color import Model, TetOptimizer
-from utils import viz_util
-from utils.graphics_utils import l2_normalize_th
-import imageio
+# from models.vertex_color import Model, TetOptimizer
+from models.ingp_color import Model, TetOptimizer
 from fused_ssim import fused_ssim
-from utils.loss_utils import ssim
 from pathlib import Path
+from utils.args import Args
 
-args = lambda x: x
+args = Args()
 args.tile_size = 16
 args.sh_deg = 3
 args.output_path = Path("output")
-args.start_tracking = 000
-args.cloning_interval = 100
+args.cloning_interval = 500
 args.budget = 1_000_000
 args.num_densification_samples = 50
 args.num_densify_iter = 3500
-args.densify_start = 1500
-args.num_iter = 5000#args.densify_start + args.num_densify_iter + 1500
+args.densify_start = 2500
+args.num_iter = args.densify_start + args.num_densify_iter + 1500
 args.sh_degree_interval = 500
 args.image_folder = "images_4"
 args.eval = True
-args.dataset_path = "/optane/nerf_datasets/360/bicycle"
+args.dataset_path = Path("/optane/nerf_datasets/360/bicycle")
+args.output_path = Path("output/test/")
+args.s_param_lr = 0.025
+args.rgb_param_lr = 0.025
+args.sh_param_lr = 0.0025
+args.vertices_lr = 5e-5
+args.final_vertices_lr = 5e-7
+args.vertices_lr_delay_mult = 0.01
+args.vertices_lr_max_steps = args.num_iter
+args.delaunay_start = 1500
+
+args.log2_hashmap_size = 18
+args.per_level_scale = 1.3
+args.L = 12
+args.scale_multi = 1
+args.network_lr = 1e-3
+args.encoding_lr = 1e-2
+args.lambda_ssim = 0.2
+
+args = Args.from_namespace(args.get_parser().parse_args())
+
+args.output_path.mkdir(exist_ok=True, parents=True)
 
 train_cameras, test_cameras, scene_info = loader.load_dataset(
     args.dataset_path, args.image_folder, data_device="cuda", eval=args.eval)
@@ -52,8 +68,8 @@ train_cameras, test_cameras, scene_info = loader.load_dataset(
 camera = train_cameras[0]
 
 device = torch.device('cuda')
-model = Model.init_from_pcd(scene_info.point_cloud, train_cameras, args.sh_deg, device)
-tet_optim = TetOptimizer(model, vertices_lr_max_steps=args.num_iter)
+model = Model.init_from_pcd(scene_info.point_cloud, train_cameras, device, **args.as_dict())
+tet_optim = TetOptimizer(model, **args.as_dict())
 
 images = []
 psnrs = [[]]
@@ -75,13 +91,12 @@ print([target_num(i+1) for i in range(args.num_densify_iter // args.cloning_inte
 
 progress_bar = tqdm(range(args.num_iter))
 for train_ind in progress_bar:
-    delaunay_interval = 10#1 if train_ind < args.densify_start else 10
+    delaunay_interval = 1 if train_ind < args.delaunay_start else 10
     do_delaunay = train_ind % delaunay_interval == 0 and train_ind > 0
     do_cloning = max(train_ind - args.densify_start, 0) % args.cloning_interval == 0 and (args.num_densify_iter + args.densify_start) > train_ind >= args.densify_start
     do_tracking = False
     do_sh = train_ind % args.sh_degree_interval == 0 and train_ind > 0
     do_sh_step = train_ind % 16 == 0
-
 
     # ind = random.randint(0, len(train_cameras)-1)
     if len(inds) == 0:
@@ -100,11 +115,9 @@ for train_ind in progress_bar:
     image = render_pkg['render']
     l2_loss = ((target - image)**2).mean()
     reg = model.regularizer()
-    # ssim_loss = 1-fused_ssim(image.unsqueeze(0), target.unsqueeze(0))
-    # lambda_ssim = 0.2
-    # loss = (1-lambda_ssim)*l2_loss + lambda_ssim*ssim_loss + reg
-    loss = l2_loss + reg
- 
+    ssim_loss = 1-fused_ssim(image.unsqueeze(0), target.unsqueeze(0))
+    loss = (1-args.lambda_ssim)*l2_loss + args.lambda_ssim*ssim_loss + reg
+
     st = time.time()
     loss.backward()
     tet_optim.main_step()
@@ -136,7 +149,6 @@ for train_ind in progress_bar:
         full_inds = list(range(len(train_cameras)))
         random.shuffle(full_inds)
 
-        tet_optim.reset_tracker()
         sampled_cameras = [train_cameras[i] for i in full_inds[:args.num_densification_samples]]
         tet_rgbs_grad = None
         for camera in sampled_cameras:
@@ -146,8 +158,7 @@ for train_ind in progress_bar:
             image = render_pkg['render']
             l2_loss = ((target - image)**2).mean()
             ssim_loss = 1-fused_ssim(image.unsqueeze(0), target.unsqueeze(0))
-            lambda_ssim = 0.2
-            loss = (1-lambda_ssim)*l2_loss + lambda_ssim*ssim_loss
+            loss = (1-args.lambda_ssim)*l2_loss + args.lambda_ssim*ssim_loss
             # loss = l2_loss
         
             loss.backward()
@@ -183,11 +194,7 @@ for train_ind in progress_bar:
         # clone_mask = (tet_rgbs_grad > rgbs_threshold) | (tet_vertex_grad > vertex_threshold)
         clone_indices = model.indices[clone_mask]
 
-        barycentric = torch.rand((clone_indices.shape[0], clone_indices.shape[1], 1), device=device).clip(min=0.01, max=0.99)
-        # barycentric = barycentric*safe_exp(-model.vertex_s_param)[clone_indices]
-        # barycentric = torch.ones((clone_indices.shape[0], clone_indices.shape[1], 1), device=device)
-        barycentric_weights = barycentric / (1e-3+barycentric.sum(dim=1, keepdim=True))
-        tet_optim.split(clone_indices, barycentric_weights)
+        tet_optim.split(clone_indices)
 
         # new_vertex_location, radius = topo_utils.calculate_circumcenters_torch(model.vertices[clone_indices])
         # new_feat = model.vertex_rgbs_param[clone_indices].mean(dim=1)
@@ -201,7 +208,6 @@ for train_ind in progress_bar:
         # out += f"∇Vertex: {tet_vertex_grad.mean()} "
         # out += f"σ: {tet_std.mean()}"
         print(out)
-        tet_optim.reset_tracker()
         torch.cuda.empty_cache()
 
     psnr = 20 * math.log10(1.0 / math.sqrt(l2_loss.detach().cpu().item()))
@@ -237,7 +243,7 @@ for train_ind in progress_bar:
 avged_psnrs = [sum(v)/len(v) for v in psnrs if len(v) == len(train_cameras)]
 plt.plot(range(len(avged_psnrs)), avged_psnrs)
 plt.show()
-mediapy.write_video("training.mp4", images)
+mediapy.write_video(args.output_path / "training.mp4", images)
 
 torch.cuda.synchronize()
 torch.cuda.empty_cache()
@@ -252,6 +258,6 @@ with torch.no_grad():
         image = image.detach().cpu().numpy()
         eimages.append(image)
 
-mediapy.write_video("rotating.mp4", eimages)
+mediapy.write_video(args.output_path / "rotating.mp4", eimages)
 model.save2ply(args.output_path / "test" / "ckpt.ply")
 

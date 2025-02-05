@@ -15,6 +15,7 @@ import numpy as np
 import os
 from plyfile import PlyData, PlyElement
 from pathlib import Path
+from utils.contraction import contract_points, inv_contract_points
 
 class Model:
     def __init__(self,
@@ -23,8 +24,13 @@ class Model:
                  vertex_rgb_param: torch.Tensor,
                  vertex_sh_param: torch.Tensor,
                  active_sh: int,
-                 sh_deg: int):
-        self.vertices = vertices
+                 sh_deg: int,
+                 center: torch.Tensor,
+                 scene_scaling: float,
+                 **kwargs):
+        self.contracted_vertices = nn.Parameter(contract_points((vertices.detach() - center) / scene_scaling))
+        self.center = center
+        self.scene_scaling = scene_scaling
         self.vertex_s_param = vertex_s_param
         self.vertex_rgb_param = vertex_rgb_param
         self.vertex_sh_param = vertex_sh_param
@@ -32,6 +38,16 @@ class Model:
         self.sh_deg = sh_deg
         self.update_triangulation()
         self.device = vertices.device
+
+    def inv_contract(self, points):
+        return inv_contract_points(points) * self.scene_scaling + self.center
+
+    def contract(self, points):
+        return contract_points((points - self.center) / self.scene_scaling)
+
+    @property
+    def vertices(self):
+        return self.inv_contract(self.contracted_vertices)
 
     def save2ply(self, path: Path):
         path.parent.mkdir(exist_ok=True, parents=True)
@@ -52,32 +68,8 @@ class Model:
         el = PlyElement.describe(elements, 'vertex')
         PlyData([el]).write(str(path))
 
-    def load_ply(self, path):
-        plydata = PlyData.read(path)
-
-        xyz = np.stack((np.asarray(plydata.elements[0]['x']),
-                        np.asarray(plydata.elements[0]['y']),
-                        np.asarray(plydata.elements[0]['z'])), axis=1)
-        
-        s_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("s_param_")]
-        s_names = sorted(s_names, key=lambda x: int(x.split('_')[-1]))
-        s_param = np.stack([np.asarray(plydata.elements[0][name]) for name in s_names], axis=1)
-        
-        rgb_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("rgb_")]
-        rgb_names = sorted(rgb_names, key=lambda x: int(x.split('_')[-1]))
-        rgb_param = np.stack([np.asarray(plydata.elements[0][name]) for name in rgb_names], axis=1)
-        
-        sh_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("sh_")]
-        sh_names = sorted(sh_names, key=lambda x: int(x.split('_')[-1]))
-        sh_param = np.stack([np.asarray(plydata.elements[0][name]) for name in sh_names], axis=1)
-        
-        self.vertices = torch.tensor(xyz, dtype=torch.float, device=self.device).requires_grad_(True)
-        self.vertex_s_param = torch.tensor(s_param, dtype=torch.float, device=self.device).requires_grad_(True)
-        self.vertex_rgb_param = torch.tensor(rgb_param, dtype=torch.float, device=self.device).requires_grad_(True)
-        self.vertex_sh_param = torch.tensor(sh_param, dtype=torch.float, device=self.device).requires_grad_(True)
-
     @staticmethod
-    def init_from_pcd(point_cloud, cameras, sh_deg, device):
+    def init_from_pcd(point_cloud, cameras, device, sh_deg, **kwargs):
         dim = 1 + 3*(sh_deg+1)**2
         torch.manual_seed(2)
         N = point_cloud.points.shape[0]
@@ -104,7 +96,13 @@ class Model:
         vertex_s_param = nn.Parameter(vertex_s_param)
         vertex_rgb_param = nn.Parameter(vertex_rgb_param)
         vertex_sh_param = nn.Parameter(vertex_sh_param)
-        model = Model(vertices, vertex_s_param, vertex_rgb_param, vertex_sh_param, 0, sh_deg)
+
+        ccenters = torch.stack([c.camera_center.reshape(3) for c in cameras], dim=0)
+        minv = ccenters.min(dim=0, keepdim=True).values
+        maxv = ccenters.max(dim=0, keepdim=True).values
+        center = (minv + (maxv-minv)/2).to(device)
+        scaling = (maxv-minv).max().to(device)
+        model = Model(vertices, vertex_s_param, vertex_rgb_param, vertex_sh_param, 0, sh_deg, center, scaling, **kwargs)
         return model
 
     def sh_up(self):
@@ -148,7 +146,7 @@ class Model:
         return features
 
     def __len__(self):
-        return self.vertices.shape[0]
+        return self.contracted_vertices.shape[0]
 
     def regularizer(self):
         return 0.0
@@ -163,7 +161,8 @@ class TetOptimizer:
                  vertices_lr: float=4e-4,
                  final_vertices_lr: float=4e-7,
                  vertices_lr_delay_mult: float=0.01,
-                 vertices_lr_max_steps: int=5000):
+                 vertices_lr_max_steps: int=5000,
+                 **kwargs):
         self.optim = optim.CustomAdam([
             # {"params": net.parameters(), "lr": 1e-3},
             {"params": [model.vertex_s_param], "lr": s_param_lr, "name": "vertex_s_param"},
@@ -173,7 +172,7 @@ class TetOptimizer:
             {"params": [model.vertex_sh_param], "lr": sh_param_lr, "name": "vertex_sh_param"},
         ])
         self.vertex_optim = optim.CustomAdam([
-            {"params": [model.vertices], "lr": vertices_lr, "name": "vertices"},
+            {"params": [model.contracted_vertices], "lr": vertices_lr, "name": "contracted_vertices"},
         ])
         self.model = model
         self.tracker_n = 0
@@ -188,7 +187,7 @@ class TetOptimizer:
     def update_learning_rate(self, iteration):
         ''' Learning rate scheduling per step '''
         for param_group in self.vertex_optim.param_groups:
-            if param_group["name"] == "vertices":
+            if param_group["name"] == "contracted_vertices":
                 lr = self.vertex_scheduler_args(iteration)
                 param_group['lr'] = lr
 
@@ -211,9 +210,9 @@ class TetOptimizer:
             vertex_sh_param = new_vert_sh,
         ))
         self.model.vertex_sh_param = new_tensors["vertex_sh_param"]
-        self.model.vertices = self.vertex_optim.cat_tensors_to_optimizer(dict(
-            vertices = new_verts
-        ))['vertices']
+        self.model.contracted_vertices = self.vertex_optim.cat_tensors_to_optimizer(dict(
+            contracted_vertices = self.model.contract(new_verts)
+        ))['contracted_vertices']
         self.model.update_triangulation()
 
     def remove_points(self, mask: torch.Tensor):
@@ -222,10 +221,12 @@ class TetOptimizer:
         self.model.vertex_rgb_param = new_tensors["vertex_rgb_param"]
         new_tensors = self.sh_optim.prune_optimizer(mask)
         self.model.vertex_sh_param = new_tensors["vertex_sh_param"]
-        self.model.vertices = self.vertex_optim.prune_optimizer(mask)['vertices']
+        self.model.contracted_vertices = self.vertex_optim.prune_optimizer(mask)['contracted_vertices']
         self.model.update_triangulation()
 
-    def split(self, clone_indices, barycentric_weights):
+    def split(self, clone_indices):
+        barycentric = torch.rand((clone_indices.shape[0], clone_indices.shape[1], 1), device=self.device).clip(min=0.01, max=0.99)
+        barycentric_weights = barycentric / (1e-3+barycentric.sum(dim=1, keepdim=True))
         new_vertex_location = (self.model.vertices[clone_indices] * barycentric_weights).sum(dim=1)
         new_s = (self.model.vertex_s_param[clone_indices] * barycentric_weights).sum(dim=1)
         new_rgb = (self.model.vertex_rgb_param[clone_indices] * barycentric_weights).sum(dim=1)

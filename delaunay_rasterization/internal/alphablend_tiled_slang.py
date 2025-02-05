@@ -8,7 +8,7 @@ import time
 def render_alpha_blend_tiles_slang_raw(indices, vertices,
                                        rgbs_fn,
                                        world_view_transform, K, cam_pos,
-                                       fovy, fovx, height, width, cell_values=None, tile_size=16):
+                                       fovy, fovx, height, width, cell_values=None, tile_size=16, min_t=0.1):
     torch.cuda.synchronize()
     assert(indices.device == vertices.device)
     assert(indices.device == world_view_transform.device)
@@ -61,6 +61,7 @@ def render_alpha_blend_tiles_slang_raw(indices, vertices,
         world_view_transform,
         K,
         cam_pos,
+        min_t,
         fovy,
         fovx)
     # torch.cuda.synchronize()
@@ -84,7 +85,7 @@ class AlphaBlendTiledRender(torch.autograd.Function):
     def forward(ctx, 
                 sorted_tetra_idx, tile_ranges,
                 indices, vertices, rgbs, render_grid,
-                world_view_transform, K, cam_pos,
+                world_view_transform, K, cam_pos, min_t,
                 fovy, fovx, device="cuda"):
         output_img = torch.zeros((render_grid.image_height, 
                                   render_grid.image_width, 4), 
@@ -116,6 +117,7 @@ class AlphaBlendTiledRender(torch.autograd.Function):
             world_view_transform=world_view_transform,
             K=K,
             cam_pos=cam_pos,
+            min_t=min_t,
             fovy=fovy,
             fovx=fovx,
             tile_height=render_grid.tile_height,
@@ -139,6 +141,7 @@ class AlphaBlendTiledRender(torch.autograd.Function):
         ctx.render_grid = render_grid
         ctx.fovy = fovy
         ctx.fovx = fovx
+        ctx.min_t = min_t
 
         return output_img
 
@@ -151,6 +154,7 @@ class AlphaBlendTiledRender(torch.autograd.Function):
         render_grid = ctx.render_grid
         fovy = ctx.fovy
         fovx = ctx.fovx
+        min_t = ctx.min_t
 
         indices_grad = torch.zeros_like(indices)
         vertices_grad = torch.zeros_like(vertices)
@@ -180,6 +184,7 @@ class AlphaBlendTiledRender(torch.autograd.Function):
             world_view_transform=world_view_transform,
             K=K,
             cam_pos=cam_pos,
+            min_t=min_t,
             fovy=fovy,
             fovx=fovx,
             tile_height=render_grid.tile_height,
