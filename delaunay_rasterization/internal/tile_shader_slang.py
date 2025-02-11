@@ -48,18 +48,25 @@ def vertex_and_tile_shader(indices,
         fovx,
         render_grid)
 
-    inds, = torch.where(vs_tetra[:, 1] == 1)
-    if len(inds) > 0:
-        min_tet_z = vs_tetra[inds[0], 2].clone()
-        z_val = vs_tetra[:, 2].clone()
+    # inds, = torch.where(vs_tetra[:, 1] == 1)
+    # if len(inds) > 0:
+    #     min_tet_z = vs_tetra[inds[0], 2].clone()
+    #     z_val = vs_tetra[:, 2].clone()
 
-        behind_mask = z_val < min_tet_z
-        tiles_touched[behind_mask] = 0
-        rect_tile_space[behind_mask, :] = 0
-        vs_tetra[:, 2] -= vs_tetra[~behind_mask, 2].min()
-        vs_tetra[behind_mask, 2] = 0
-    else:
-        vs_tetra[:, 2] -= vs_tetra[:, 2].min()
+    #     behind_mask = z_val < min_tet_z
+    #     tiles_touched[behind_mask] = 0
+    #     rect_tile_space[behind_mask, :] = 0
+
+    #     offset = vs_tetra[~behind_mask, 2].min()
+    #     if offset < -1000:
+    #         ic(offset)
+    #     vs_tetra[:, 2] -= offset
+    #     vs_tetra[behind_mask, 2] = 0
+    # else:
+    #     offset = vs_tetra[:, 2].min()
+    #     if offset < -1000:
+    #         ic(offset)
+    #     vs_tetra[:, 2] -= offset
 
     with torch.no_grad():
         # w = rect_tile_space[:, 2] - rect_tile_space[:, 0]

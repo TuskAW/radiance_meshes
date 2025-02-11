@@ -1,0 +1,25 @@
+error,output_folder,density_start,pre_multi,ladder_p,num_iter,gpu_id
+Process failed and no JSON output file found,output/lp-0.10_pm250.00_ni2000_ds2000_038af2,2000,250.00,-0.10,2000,1
+Process failed and no JSON output file found,output/lp-0.10_pm500.00_ni2000_ds2000_0d8166,2000,500.00,-0.10,2000,2
+Process failed and no JSON output file found,output/lp-0.10_pm125.00_ni2000_ds2000_e354d3,2000,125.00,-0.10,2000,0
+Process failed and no JSON output file found,output/lp-0.10_pm1000.00_ni2000_ds2000,2000,1000.00,-0.10,2000,3
+Process failed and no JSON output file found,output/lp-0.10_pm4000.00_ni2000_ds2000,2000,4000.00,-0.10,2000,1
+Process failed and no JSON output file found,output/lp-0.10_pm2000.00_ni2000_ds2000,2000,2000.00,-0.10,2000,0
+Process failed and no JSON output file found,output/lp-0.50_pm125.00_ni2000_ds2000_f59e87,2000,125.00,-0.50,2000,2
+Process failed and no JSON output file found,output/lp-0.50_pm250.00_ni2000_ds2000_d7441f,2000,250.00,-0.50,2000,3
+Process failed and no JSON output file found,output/lp-0.50_pm500.00_ni2000_ds2000_7da491,2000,500.00,-0.50,2000,0
+Process failed and no JSON output file found,output/lp-0.50_pm1000.00_ni2000_ds2000,2000,1000.00,-0.50,2000,1
+Process failed and no JSON output file found,output/lp-0.50_pm2000.00_ni2000_ds2000,2000,2000.00,-0.50,2000,2
+Process failed and no JSON output file found,output/lp-0.50_pm4000.00_ni2000_ds2000,2000,4000.00,-0.50,2000,3
+Process failed and no JSON output file found,output/lp-1.00_pm125.00_ni2000_ds2000_f92f6d,2000,125.00,-1.00,2000,0
+Process failed and no JSON output file found,output/lp-1.00_pm500.00_ni2000_ds2000_cc5b51,2000,500.00,-1.00,2000,2
+Process failed and no JSON output file found,output/lp-1.00_pm250.00_ni2000_ds2000_b09e7a,2000,250.00,-1.00,2000,1
+Process failed and no JSON output file found,output/lp-1.00_pm1000.00_ni2000_ds2000,2000,1000.00,-1.00,2000,3
+Process failed and no JSON output file found,output/lp-1.00_pm2000.00_ni2000_ds2000,2000,2000.00,-1.00,2000,0
+Process failed and no JSON output file found,output/lp-2.00_pm125.00_ni2000_ds2000_1fb71f,2000,125.00,-2.00,2000,2
+Process failed and no JSON output file found,output/lp-1.00_pm4000.00_ni2000_ds2000,2000,4000.00,-1.00,2000,1
+Process failed and no JSON output file found,output/lp-2.00_pm250.00_ni2000_ds2000_32e0df,2000,250.00,-2.00,2000,3
+Process failed and no JSON output file found,output/lp-2.00_pm1000.00_ni2000_ds2000,2000,1000.00,-2.00,2000,1
+Process failed and no JSON output file found,output/lp-2.00_pm500.00_ni2000_ds2000_7a73dd,2000,500.00,-2.00,2000,0
+Process failed and no JSON output file found,output/lp-2.00_pm2000.00_ni2000_ds2000,2000,2000.00,-2.00,2000,2
+Process failed and no JSON output file found,output/lp-2.00_pm4000.00_ni2000_ds2000,2000,4000.00,-2.00,2000,3

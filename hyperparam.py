@@ -18,6 +18,30 @@ def parse_args():
                         help="Comma-separated list of GPU IDs to use for concurrent jobs.")
     return parser.parse_args()
 
+def generate_folder_name(test_params, base_dir="output"):
+    """
+    Generate a folder name based on test parameters.
+    For each parameter (except output_path), the key is split by '_' and its first letters are
+    taken and concatenated with the value. All such pieces are joined with underscores.
+    """
+    parts = []
+    # Iterate in the order provided by test_params (csv.DictReader preserves header order)
+    for key, value in test_params.items():
+        if key == "output_path":
+            continue
+        # Split the key by '_' and take the first letter of each non-empty piece
+        initials = ''.join(piece[0] for piece in key.split('_') if piece)
+        parts.append(f"{initials}{value}")
+    folder_name = "_".join(parts)
+    # Construct the full path inside the base directory.
+    full_path = os.path.join(base_dir, folder_name)
+    # If the folder already exists, append a short random suffix to ensure uniqueness.
+    if os.path.exists(full_path):
+        suffix = uuid.uuid4().hex[:6]
+        folder_name = folder_name + "_" + suffix
+        full_path = os.path.join(base_dir, folder_name)
+    return full_path
+
 def run_test(test_params, gpu_id):
     """
     Run a single test on a given GPU.
@@ -27,15 +51,14 @@ def run_test(test_params, gpu_id):
     Returns a merged dictionary of the original test parameters and the JSON output
     (or error information) from the run.
     """
-    # Create a unique folder for this run using a UUID.
-    run_id = uuid.uuid4().hex
-    output_folder = os.path.join("output", run_id)
+    # Generate a unique folder name based on the test parameters.
+    output_folder = generate_folder_name(test_params)
     os.makedirs(output_folder, exist_ok=True)
     
     # Base command with GPU assignment and script name.
     base_command = f"CUDA_VISIBLE_DEVICES={gpu_id} python nerf_test.py"
     
-    # Build command-line arguments. Override output_path with our unique folder.
+    # Build command-line arguments. Override any CSV-specified output_path with our unique folder.
     cmd_args = []
     for arg, value in test_params.items():
         if arg == "output_path":
@@ -54,7 +77,7 @@ def run_test(test_params, gpu_id):
     except subprocess.CalledProcessError as e:
         print(f"Test on GPU {gpu_id} failed with error: {e}")
     
-    # Try to read the JSON output regardless of the subprocess exit status.
+    # Try to read the JSON output regardless of subprocess exit status.
     if os.path.exists(json_file):
         try:
             with open(json_file, "r") as f:
@@ -65,7 +88,7 @@ def run_test(test_params, gpu_id):
         data = {"error": "Process failed and no JSON output file found"}
     
     # Add run metadata.
-    data["run_id"] = run_id
+    data["output_folder"] = output_folder
     data["gpu_id"] = gpu_id
     
     # Merge the original test parameters with the result so that the final row has both.

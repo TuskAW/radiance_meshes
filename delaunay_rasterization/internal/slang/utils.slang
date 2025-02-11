@@ -587,7 +587,7 @@ CtrlPt evaluate_tetra(in SplatTetrahedra g,
                       in float3 ray_o,
                       in float3 ray_d)
 {
-    // float dist = ray_tetrahedron_intersect(ray_o, ray_d, g.tet);
+    // float2 dist = ray_tetrahedron_intersect(ray_o, ray_d, g.tet);
     float2 dist = ray_tetrahedron_intersect_fused(ray_o, ray_d, g.tet.verts[0], g.tet.verts[1], g.tet.verts[2], g.tet.verts[3]);
     if (dist.x <= 0) {
         return {{0.f, 0.f, 0.f, 0.f}, dist.y};

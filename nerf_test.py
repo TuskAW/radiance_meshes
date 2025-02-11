@@ -69,32 +69,32 @@ args.output_path = Path("output/test/")
 args.s_param_lr = 0.025
 args.rgb_param_lr = 0.025
 args.sh_param_lr = 0.0025
-args.vertices_lr = 5e-5
-args.final_vertices_lr = 5e-5
+args.vertices_lr = 1e-4
+args.final_vertices_lr = 1e-4
 args.vertices_lr_delay_mult = 0.01
 args.vertices_lr_max_steps = args.num_iter
 args.delaunay_start = 1500
 
-# args.log2_hashmap_size = 18
-# args.per_level_scale = 1.5
-# args.L = 12
-
 args.log2_hashmap_size = 22
 args.per_level_scale = 2
 args.L = 10
+args.density_offset = -1
 
-args.scale_multi = 1.0
+args.scale_multi = 2.0
 args.network_lr = 1e-3
 args.final_network_lr = 1e-3
 args.encoding_lr = 1e-2
 args.final_encoding_lr = 1e-3
 args.lambda_ssim = 0.1
 args.weight_decay = 0.01
-args.additional_pts = 0
 args.render_size_min = 0
 args.vertices_beta = [0.9, 0.99]
 args.lambda_dist = 1e-3
 args.net_weight_decay = 0.0
+args.clip_multi = 1e-4
+
+args.ladder_p = -0.1
+args.pre_multi = 500.0
 
 args.split_std = 0.1
 args.split_mode = "barycentric"
@@ -167,7 +167,7 @@ for train_ind in progress_bar:
     target = camera.original_image.cuda()
 
     st = time.time()
-    render_pkg = render(camera, model, tile_size=args.tile_size, min_t=model.scene_scaling * 0.1)
+    render_pkg = render(camera, model, min_t=model.scene_scaling * 0.1, **args.as_dict())
     # torch.cuda.synchronize()
     # print(f'render: {(time.time()-st)}')
     image = render_pkg['render'].clip(min=0, max=1)
@@ -178,6 +178,7 @@ for train_ind in progress_bar:
 
     st = time.time()
     loss.backward()
+
     tet_optim.main_step()
     tet_optim.main_zero_grad()
 

@@ -16,6 +16,37 @@ import utils;
 import intersect;
 import minkowski;
 
+uint32_t float2sortable_key(float value)
+{
+    // Step 1: reinterpret float bits as uint
+    uint32_t bits = asuint(value);
+
+    // Step 2: sign-aware transform
+    // If sign bit set (negative), invert all bits;
+    // else flip only the sign bit.
+    if ((bits & 0x80000000) != 0)
+    {
+        // Negative: invert everything
+        bits = ~bits;  // bits ^ 0xFFFFFFFF
+    }
+    else
+    {
+        // Nonnegative: flip sign bit
+        bits ^= 0x80000000;
+    }
+
+    // Step 3 (optional): convert to big-endian byte order
+    // so that raw 4-byte lexicographic comparison is correct.
+    // If you do NOT need actual memory-based lex compares,
+    // you can skip the byte swap and just return 'bits'.
+    // bits = ( (bits << 24) & 0xFF000000 ) |
+    //        ( (bits <<  8) & 0x00FF0000 ) |
+    //        ( (bits >>  8) & 0x0000FF00 ) |
+    //        ( (bits >> 24) & 0x000000FF );
+
+    return bits;
+}
+
 [AutoPyBindCUDA]
 [CUDAKernel]
 void generate_keys_smart(TensorView<float> xyz_vs,
@@ -107,7 +138,8 @@ void generate_keys_smart(TensorView<float> xyz_vs,
 
             uint64_t key = y * grid_width + x;
             key <<= 32;
-            uint32_t fk = reinterpret<uint32_t>(abs(ndc_xyz.z));
+            // uint32_t fk = reinterpret<uint32_t>(abs(ndc_xyz.z));
+            uint32_t fk = float2sortable_key(ndc_xyz.z);
             key = key | fk;
 
             out_unsorted_keys[offset] = key;
@@ -159,7 +191,8 @@ void generate_keys(TensorView<float> xyz_vs,
         {
             uint64_t key = y * grid_width + x;
             key <<= 32;
-            uint32_t fk = reinterpret<uint32_t>(abs(ndc_xyz.z));
+            // uint32_t fk = reinterpret<uint32_t>(abs(ndc_xyz.z));
+            uint32_t fk = float2sortable_key(ndc_xyz.z);
             key = key | fk;
 
             out_unsorted_keys[offset] = key;

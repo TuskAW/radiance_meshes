@@ -8,6 +8,7 @@ from delaunay_rasterization.internal.alphablend_tiled_slang import AlphaBlendTil
 from delaunay_rasterization.internal.render_grid import RenderGrid
 from delaunay_rasterization.internal.tile_shader_slang import vertex_and_tile_shader
 import numpy as np
+from utils import topo_utils, train_util
 
 def sample_uniform_in_sphere(batch_size, dim, radius=1.0, device=None):
     """
@@ -39,7 +40,19 @@ def sample_uniform_in_sphere(batch_size, dim, radius=1.0, device=None):
 
     return samples
 
-class ScaleGradients(torch.autograd.Function):
+class ClippedGradients(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, input, lr_matrix):
+        ctx.save_for_backward(lr_matrix)
+        return input  # Identity operation
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        lr_matrix, = ctx.saved_tensors
+        grad_output = torch.maximum(-lr_matrix.abs(), torch.minimum(lr_matrix.abs(), grad_output))
+        return grad_output, None
+
+class ScaledGradients(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input, lr_matrix):
         ctx.save_for_backward(lr_matrix)
@@ -125,7 +138,7 @@ def safe_sin(x):
     return safe_trig_helper(x, torch.sin)
 
 
-def render(camera: Camera, model, register_tet_hook=False, tile_size=16, min_t=0.1, pre_multi=500, ladder_p=-0.1):
+def render(camera: Camera, model, register_tet_hook=False, tile_size=16, min_t=0.1, pre_multi=500, ladder_p=-0.1, clip_multi=1e-4, **kwargs):
     fy = fov2focal(camera.fovy, camera.image_height)
     fx = fov2focal(camera.fovx, camera.image_width)
     K = torch.tensor([
@@ -153,12 +166,14 @@ def render(camera: Camera, model, register_tet_hook=False, tile_size=16, min_t=0
                              camera.image_width,
                              tile_height=tile_size,
                              tile_width=tile_size)
-    # with torch.no_grad():
-    #     sensitivity = topo_utils.compute_vertex_sensitivity(model.indices, model.vertices)
-    #     scaling = 1/(sensitivity.reshape(-1, 1)+1e-5)
+    with torch.no_grad():
+        sensitivity = topo_utils.compute_vertex_sensitivity(model.indices, model.vertices)
+        scaling = clip_multi/(sensitivity.reshape(-1, 1)+1e-5)
     # scale_vertices = train_util.ScaleGradients.apply(model.vertices, scaling)
+    # scale_vertices = train_util.ClippedGradients.apply(model.vertices, scaling)
     sorted_tetra_idx, tile_ranges, vs_tetra, circumcenter, mask, _, tet_area = vertex_and_tile_shader(
         model.indices,
+        # scale_vertices,
         # scale_vertices,
         model.vertices,
         model.vertices,

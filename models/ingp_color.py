@@ -125,11 +125,13 @@ class Model:
                  base_resolution=16,
                  per_level_scale=2,
                  L=10,
+                 density_offset=-1,
                  **kwargs):
         self.scale_multi = scale_multi
         self.L = L
         self.dim = 4
         self.device = vertices.device
+        self.density_offset = density_offset
         config = dict(
             otype="HashGrid",
             n_levels=self.L,
@@ -182,23 +184,17 @@ class Model:
         return self.inv_contract(self.contracted_vertices)
 
     @staticmethod
-    def init_from_pcd(point_cloud, cameras, device, additional_pts=20000, **kwargs):
+    def init_from_pcd(point_cloud, cameras, device, **kwargs):
         torch.manual_seed(2)
         N = point_cloud.points.shape[0]
         # N = 1000
         vertices = torch.as_tensor(point_cloud.points)[:N]
-        minv = vertices.min(dim=0, keepdim=True).values
-        maxv = vertices.max(dim=0, keepdim=True).values
-        vertices = torch.cat([
-          vertices.reshape(-1, 3),
-          (torch.rand((additional_pts, 3)) * (maxv - minv) + minv) * 2
-        ], dim=0)
 
         ccenters = torch.stack([c.camera_center.reshape(3) for c in cameras], dim=0)
         minv = ccenters.min(dim=0, keepdim=True).values
         maxv = ccenters.max(dim=0, keepdim=True).values
         # center = (minv + (maxv-minv)/2).to(device)
-        # scaling1 = (maxv-minv).max().to(device)
+        # scaling = (maxv-minv).max().to(device)
         center = ccenters.mean(dim=0)
         scaling = torch.linalg.norm(ccenters - center.reshape(1, 3), dim=1, ord=torch.inf).max()
         # ic(center1, center, scaling1, scaling)
@@ -232,9 +228,8 @@ class Model:
     def get_cell_values(self, camera: Camera, mask=None):
         indices = self.indices[mask] if mask is not None else self.indices
         vertices = self.vertices
-        new_vertex_location, radius = calculate_circumcenters_torch(vertices[indices])
-        new_vertex_location = vertices[indices].sum(dim=1)
-        normalized = (new_vertex_location - self.center) / self.scene_scaling
+        circumcenter, radius = calculate_circumcenters_torch(vertices[indices])
+        normalized = (circumcenter - self.center) / self.scene_scaling
         cv, cr = contract_mean_std(normalized, radius / self.scene_scaling)
         cr = cr * self.scale_multi
         n = torch.arange(self.L, device=self.device).reshape(1, 1, -1)
@@ -246,10 +241,9 @@ class Model:
         output = output * scaling
         output = self.network(output.reshape(-1, self.L * self.dim)).float()
 
-        # output = output.sum(dim=1)
         # directions = l2_normalize_th(self.vertices - camera.camera_center.reshape(1, 3))
         features = torch.cat([
-            torch.nn.functional.softplus(output[:, :3]), safe_exp(output[:, 3:4]-2)], dim=1)
+            torch.nn.functional.softplus(output[:, :3]), safe_exp(output[:, 3:4]+self.density_offset)], dim=1)
         return features
 
     def __len__(self):

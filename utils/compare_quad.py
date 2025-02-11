@@ -162,6 +162,7 @@ def test_tetrahedra_rendering(vertices, indices, rgbs, viewmat, n_samples=10000,
                 colors,
                 height, width, viewmat.cpu().numpy(),
                 fx.item(), fy.item(),
+                tmin,
                 jnp.linspace(0, 1, n_samples)
             )
             return img[..., :3].mean()

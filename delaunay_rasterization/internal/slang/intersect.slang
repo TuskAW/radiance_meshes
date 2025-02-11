@@ -161,7 +161,7 @@ bool ray_triangle_intersect2(in float3 ray_origin,
 
 // Ray-tetrahedron intersection function
 [Differentiable]
-float ray_tetrahedron_intersect(float3 orig, float3 dir, Tetrahedra g) {
+float2 ray_tetrahedron_intersect(float3 orig, float3 dir, Tetrahedra g) {
     float3 v0 = g.verts[0];
     float3 v1 = g.verts[1];
     float3 v2 = g.verts[2];
@@ -170,9 +170,6 @@ float ray_tetrahedron_intersect(float3 orig, float3 dir, Tetrahedra g) {
     bool hit = false;
     float t_enter = FLT_MAX;
     float t_exit = -FLT_MAX;
-    // if (point_in_tetrahedron(g, orig)) {
-    //     t_enter = 0;
-    // }
 
     // Check intersection with each face of the tetrahedron
     float t;
@@ -191,7 +188,6 @@ float ray_tetrahedron_intersect(float3 orig, float3 dir, Tetrahedra g) {
         t_enter = min(t_enter, t);
         t_exit = max(t_exit, t);
     }
-    if (t_enter > t_exit) return -1; // early exit
 
     if (ray_triangle_intersect(orig, dir, v1, v2, v3, t)) {
         hit = true;
@@ -199,10 +195,14 @@ float ray_tetrahedron_intersect(float3 orig, float3 dir, Tetrahedra g) {
         t_exit = max(t_exit, t);
     }
 
+    if (point_in_tetrahedron(g, orig)) {
+        t_enter = 0;
+    }
+
     if (hit) {
-        return max(t_exit - max(t_enter, 0), 0);
+        return {max(t_exit - max(t_enter, 0), 0), (t_enter+t_exit)/2};
     } else {
-        return -1;
+        return {-1, 0};
     }
 }
 

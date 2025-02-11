@@ -6,6 +6,7 @@ import spherical_harmonics;
 import intersect;
 import minkowski;
 import tet_area;
+import stable_power;
 
 struct rectangle {
     int32_t min_x;
@@ -207,17 +208,24 @@ void vertex_shader(TensorView<int32_t> indices,
     out_rect_tile_space[uint2(g_idx, 2)] = rect_tile_space.max_x;
     out_rect_tile_space[uint2(g_idx, 3)] = rect_tile_space.max_y;
 
-    float3 view_dir = { cam.world_view_transform._31, cam.world_view_transform._32, cam.world_view_transform._33 };
-    if (contains_ray_origin) {
-        out_tet_area[g_idx] = (float) (cam.H * cam.W);
-    } else {
-        out_tet_area[g_idx] = max(no_diff tet_area(camspace_tet2image_w_depth(camspace_tet, cam), view_dir, cam), 1);
-    }
+    // float3 view_dir = { cam.world_view_transform._31, cam.world_view_transform._32, cam.world_view_transform._33 };
+    // if (contains_ray_origin) {
+    //     out_tet_area[g_idx] = (float) (cam.H * cam.W);
+    // } else {
+    //     out_tet_area[g_idx] = max(no_diff tet_area(camspace_tet2image_w_depth(camspace_tet, cam), view_dir, cam), 1);
+    // }
 
     float3 circumcenter = calculate_circumcenter(tet);
-    float radius = length(circumcenter - tet.verts[0]);
-    float circum_dist = length(circumcenter - cam.position);
-    float sort_depth = circum_dist*circum_dist - radius*radius;
+    // float radius = length(circumcenter - tet.verts[0]);
+    // float circum_dist = length(circumcenter - cam.position);
+    // float sort_depth = circum_dist * circum_dist - radius * radius;
+
+    double3 A = { double(tet.verts[0].x), double(tet.verts[0].y), double(tet.verts[0].z) };
+    double3 B = { double(tet.verts[1].x), double(tet.verts[1].y), double(tet.verts[1].z) };
+    double3 C = { double(tet.verts[2].x), double(tet.verts[2].y), double(tet.verts[2].z) };
+    double3 D = { double(tet.verts[3].x), double(tet.verts[3].y), double(tet.verts[3].z) };
+    double3 P = { double(cam.position.x), double(cam.position.y), double(cam.position.z) };
+    float sort_depth = float(no_diff power_of_circumsphere(A, B, C, D, P));
 
     out_vs.storeOnce(uint2(g_idx, 2), min(max(sort_depth, FLT_MIN), FLT_MAX));
 
