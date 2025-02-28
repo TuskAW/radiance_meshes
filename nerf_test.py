@@ -32,6 +32,7 @@ import imageio
 from torch.profiler import profile, ProfilerActivity, record_function
 from utils import test_util
 import cv2
+from utils.graphics_utils import tetra_volume
 
 
 class CustomEncoder(json.JSONEncoder):
@@ -107,6 +108,7 @@ args.net_weight_decay = 0.0
 args.contract_vertices = False
 args.vertices_warmup = 0
 args.hashmap_dim = 4
+args.min_clone_size = 1e-3
 
 # args.ladder_p = -0.5
 # args.pre_multi = 4000.0
@@ -264,12 +266,14 @@ for train_ind in progress_bar:
             del render_pkg, tet_grad_color, image, render_tensor
 
         with torch.no_grad():
+            tet_volume = tetra_volume(model.vertices, model.indices)
+            large_enough = tet_volume > args.min_clone_size
+            tet_rgbs_grad = torch.where(large_enough, tet_rgbs_grad, 0)
             target_addition = target_num((train_ind - args.densify_start) // args.cloning_interval + 1) - model.vertices.shape[0]
             ic(target_addition, (train_ind - args.densify_start) // args.cloning_interval + 1)
             if target_addition > 0:
                 rgbs_threshold = torch.sort(tet_rgbs_grad).values[-min(int(target_addition), tet_rgbs_grad.shape[0])]
-
-                clone_mask = tet_rgbs_grad > rgbs_threshold
+                clone_mask = (tet_rgbs_grad > rgbs_threshold)
 
                 # rgbs_grad, vertex_grad = tet_optim.get_tracker_predicates() 
                 # reduce_type = "sum"
@@ -315,7 +319,7 @@ for train_ind in progress_bar:
             image = render_pkg['render']
             image = image.permute(1, 2, 0)
             image = (image.detach().cpu().numpy()*255).clip(min=0, max=255).astype(np.uint8)
-            video_writer.write(image)
+            video_writer.write(cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
             del image
             # images.append(image)
     # print(f'second: {(time.time()-st)}')

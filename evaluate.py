@@ -9,6 +9,8 @@ import numpy as np
 from data import loader
 from utils import test_util
 from utils.args import Args
+from utils import cam_util
+import mediapy
 
 args = Args()
 args.tile_size = 16
@@ -29,4 +31,16 @@ else:
 
 train_cameras, test_cameras, scene_info = loader.load_dataset(
     args.dataset_path, args.image_folder, data_device="cuda", eval=args.eval)
+
+with torch.no_grad():
+    epath = cam_util.generate_cam_path(train_cameras, 400)
+    eimages = []
+    for camera in tqdm(epath):
+        render_pkg = render(camera, model, tile_size=args.tile_size)
+        image = render_pkg['render']
+        image = image.permute(1, 2, 0)
+        image = image.detach().cpu().numpy()
+        eimages.append(image)
+
+mediapy.write_video(args.output_path / "rotating.mp4", eimages)
 test_util.evaluate_and_save(model, test_cameras, args.output_path, args.tile_size)
