@@ -4,7 +4,7 @@ import math
 from data.camera import Camera
 from utils import optim
 from sh_slang.eval_sh import eval_sh
-from delaunay_rasterization.internal.alphablend_tiled_slang import AlphaBlendTiledRender, render_alpha_blend_tiles_slang_raw
+from delaunay_rasterization.internal.alphablend_tiled_slang import AlphaBlendTiledRender
 from delaunay_rasterization.internal.render_grid import RenderGrid
 from delaunay_rasterization.internal.tile_shader_slang import vertex_and_tile_shader, point2image
 import numpy as np
@@ -178,7 +178,7 @@ def render(camera: Camera, model, bg=0, cell_values=None, tile_size=16, min_t=0.
         render_grid)
     if cell_values is None:
         cell_values = torch.zeros((mask.shape[0], 4), device=circumcenter.device)
-        cell_values[mask] = model.get_cell_values(camera, mask)
+        vertex_color, cell_values[mask] = model.get_cell_values(camera, mask)
     # cell_values = model.get_cell_values(camera)
 
     # torch.cuda.synchronize()
@@ -199,6 +199,7 @@ def render(camera: Camera, model, bg=0, cell_values=None, tile_size=16, min_t=0.
         # tet_vertices,
         vertices,
         # verts_trans,
+        vertex_color,
         cell_values,
         render_grid,
         world_view_transform,

@@ -34,11 +34,17 @@ class TetrahedraRenderingTest(parameterized.TestCase):
         return torch.tensor(quat.rotation_matrix, device='cuda').float()
 
     def run_test(self, vertices, viewmat, tile_size):
-        rgbs = torch.ones(1, 4).cuda()
-        rgbs[:, 3] = 10
-        results = test_tetrahedra_rendering(vertices, self.indices, rgbs, viewmat, 
+        vertex_color = torch.tensor([
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.5, 0.0, 0.5],
+        ]).cuda()
+        tet_density = torch.tensor([[10.0]]).cuda()
+
+        results = test_tetrahedra_rendering(vertices, self.indices, vertex_color, tet_density, viewmat, 
                                          height=self.height, width=self.width, tile_size=tile_size, n_samples=10000)
-        results2 = test_tetrahedra_rendering(vertices, self.indices, rgbs, viewmat, 
+        results2 = test_tetrahedra_rendering(vertices, self.indices, vertex_color, tet_density, viewmat, 
                                          height=self.height, width=self.width, tile_size=tile_size, n_samples=5000)
         compare_dict_values(results, results2, key_pairs, vertices, viewmat)
 

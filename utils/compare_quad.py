@@ -5,14 +5,12 @@ import math
 from pathlib import Path
 
 from jaxutil import tetra_quad
-from delaunay_rasterization.internal.alphablend_tiled_slang import AlphaBlendTiledRender
-from delaunay_rasterization.internal.render_grid import RenderGrid
-from delaunay_rasterization.internal.tile_shader_slang import vertex_and_tile_shader, point2image
 from pyquaternion import Quaternion
 from icecream import ic
 from jax import jacrev, grad
 import jax.numpy as jnp
-
+from utils.train_util import render
+from data.camera import Camera
 
 def get_projection_matrix(znear, zfar, fy, fx, height, width, device):
     """Calculate projection matrix for given camera parameters."""
@@ -60,7 +58,7 @@ def setup_camera(height, width, fov_degrees, viewmat):
     
     return viewmat, K, cam_pos, fovy, fovx, fx, fy
 
-def test_tetrahedra_rendering(vertices, indices, rgbs, viewmat, n_samples=10000, height=3, width=3,
+def test_tetrahedra_rendering(vertices, indices, vertex_color, tet_density, viewmat, n_samples=10000, height=3, width=3,
                               tile_size=16, fov=90, check_gradients=True, tmin=0.01):
     """
     Test tetrahedra rendering by comparing JAX and PyTorch implementations.
@@ -79,52 +77,57 @@ def test_tetrahedra_rendering(vertices, indices, rgbs, viewmat, n_samples=10000,
     """
     # Setup camera
     viewmat, projection_matrix, cam_pos, fovy, fovx, fx, fy = setup_camera(height, width, fov, viewmat)
-    # ic(projection_matrix)
+    # Now extract R,T from viewmat
+    # If viewmat is truly "World->View", then R is top-left 3x3, T is top-right 3x1
+    R = viewmat[:3, :3]#.T
+    T = viewmat[:3, 3]
+
+    # Create a blank image for the camera
+    blank_image = torch.zeros((3, height, width), device="cuda")
+
+    # Instantiate the camera
+    camera = Camera(
+        colmap_id = 0,
+        R = R.cpu().numpy(),
+        T = T.cpu().numpy(),
+        fovx = fovx,
+        fovy = fovy,
+        image = blank_image,
+        gt_alpha_mask = None,
+        uid = 0,
+        cx = -1,
+        cy = -1,
+        trans = np.array([0.0, 0.0, 0.0]), # or any translation offset you need
+        scale = 1.0,
+        data_device = "cuda",
+        # You can add any extra distortions, exposure, etc. you might need
+    )
     
     # Setup rendering grid
-    render_grid = RenderGrid(height, width, tile_height=tile_size, tile_width=tile_size)
     if check_gradients:
         # Detach and enable gradients
         vertices = vertices.detach().requires_grad_(True)
-        rgbs = rgbs.detach().requires_grad_(True)
-    
-    # Get sorted tetrahedra and other rendering parameters
-    sorted_tetra_idx, tile_ranges, vs_tetra, circumcenter, mask, rect_tile_space, tet_area = vertex_and_tile_shader(
-        indices,
-        vertices,
-        rgbs,
-        viewmat.cuda(),
-        projection_matrix.cuda(),
-        cam_pos.cuda(),
-        fovy,
-        fovx,
-        render_grid
-    )
-    verts_trans = point2image(vertices, viewmat.cuda(), projection_matrix.cuda(), cam_pos.cuda())
-    
-    # Render using PyTorch implementation
-    torch_image, _ = AlphaBlendTiledRender.apply(
-        sorted_tetra_idx,
-        tile_ranges,
-        indices,
-        # vertices[indices],
-        vertices,
-        # verts_trans,
-        rgbs,
-        render_grid,
-        viewmat.cuda(),
-        projection_matrix.cuda(),
-        cam_pos.cuda(),
-        1000,
-        -0.1,
-        tmin,
-        fovy,
-        fovx
-    )
+        tet_density = tet_density.detach().requires_grad_(True)
+        vertex_color = vertex_color.detach().requires_grad_(True)
+    model = lambda x: x
+    model.vertices = vertices
+    model.vertex_color = vertex_color
+    model.tet_density = tet_density
+    model.indices = indices
+    def get_cell_values(camera, mask):
+        if mask is not None:
+            return vertex_color, tet_density[mask]
+        else:
+            return vertex_color, tet_density
+    model.get_cell_values = get_cell_values
+
+    render_pkg = render(camera, model, tile_size=tile_size)
+    torch_image = render_pkg['render'].permute(1, 2, 0)
     
     jax_image, extras = tetra_quad.render_camera(
         vertices.detach().cpu().numpy(), indices.cpu().numpy(),
-        rgbs.detach().cpu().numpy(),
+        vertex_color.detach().cpu().numpy(),
+        tet_density.detach().cpu().numpy(),
         height, width, viewmat.cpu().numpy(),
         fx.item(), fy.item(), tmin, np.linspace(0, 1, n_samples))
 
@@ -141,10 +144,11 @@ def test_tetrahedra_rendering(vertices, indices, rgbs, viewmat, n_samples=10000,
         'mean_error': mean_error,
         'max_error': max_error,
         'extras': extras,
-        'vs_tetra': vs_tetra,
-        'circumcenter': circumcenter,
-        'rect_tile_space': rect_tile_space,
-        'tet_area': tet_area,
+        'torch_extras': render_pkg,
+        # 'vs_tetra': vs_tetra,
+        # 'circumcenter': circumcenter,
+        # 'rect_tile_space': rect_tile_space,
+        # 'tet_area': tet_area,
     }
 
     if check_gradients:
@@ -154,14 +158,16 @@ def test_tetrahedra_rendering(vertices, indices, rgbs, viewmat, n_samples=10000,
         
         # Store PyTorch gradients
         results['torch_vertex_grad'] = vertices.grad.clone().cpu().numpy()
-        results['torch_rgbs_grad'] = rgbs.grad.clone().cpu().numpy()
+        results['torch_vertex_color_grad'] = vertex_color.grad.clone().cpu().numpy()
+        results['torch_tet_density_grad'] = tet_density.grad.clone().cpu().numpy()
         
         def render_fn(verts_and_rgbs):
-            verts, colors = verts_and_rgbs
+            verts, vertex_colors, tet_density = verts_and_rgbs
             img, _ = tetra_quad.render_camera(
                 verts,
                 indices.cpu().numpy(),
-                colors,
+                vertex_colors,
+                tet_density,
                 height, width, viewmat.cpu().numpy(),
                 fx.item(), fy.item(),
                 tmin,
@@ -170,17 +176,20 @@ def test_tetrahedra_rendering(vertices, indices, rgbs, viewmat, n_samples=10000,
             return img[..., :3].mean()
 
         # Compute JAX gradients using jacrev
-        jax_verts_grad, jax_rgbs_grad = grad(render_fn)((
+        jax_verts_grad, jax_vertex_color_grad, jax_tet_density_grad = grad(render_fn)((
             vertices.detach().cpu().numpy(),
-            rgbs.detach().cpu().numpy()
+            vertex_color.detach().cpu().numpy(),
+            tet_density.detach().cpu().numpy()
         ))
             
         # Compute JAX gradients (assuming tetra_quad.render_camera returns gradients)
         results['jax_vertex_grad'] = np.array(jax_verts_grad)
-        results['jax_rgbs_grad'] = np.array(jax_rgbs_grad)
+        results['jax_vertex_color_grad'] = np.array(jax_vertex_color_grad)
+        results['jax_tet_density_grad'] = np.array(jax_tet_density_grad)
 
         results['vertex_err'] = np.abs(results['torch_vertex_grad'] - results['jax_vertex_grad'])
-        results['rgbs_err'] = np.abs(results['torch_rgbs_grad'] - results['jax_rgbs_grad'])
+        results['vertex_color_err'] = np.abs(results['torch_vertex_color_grad'] - results['jax_vertex_color_grad'])
+        results['tet_density_err'] = np.abs(results['torch_tet_density_grad'] - results['jax_tet_density_grad'])
 
     return results
 

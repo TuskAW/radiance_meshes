@@ -552,6 +552,7 @@ SplatTetrahedra load_tet_alphablend(int32_t g_idx,
         read_t4_float4(g_idx, rgbs)
     };
 }
+
 /*
 [Differentiable]
 SplatTetrahedra load_tet_alphablend(int32_t g_idx,

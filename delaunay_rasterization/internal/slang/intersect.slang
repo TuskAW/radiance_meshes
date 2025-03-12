@@ -47,7 +47,9 @@ bool ray_triangle_intersect(
     float3 v0,
     float3 v1,
     float3 v2,
-    out float t)
+    out float t,
+    out float U,
+    out float V)
 {
     t = -1;
     /* Calculate dimension where the ray direction is maximal */
@@ -79,8 +81,8 @@ bool ray_triangle_intersect(
     float Cy = C[ky] - Sy * C[kz];
 
     /* Calculate scaled barycentric coordinates */
-    float U = Cx * By - Cy * Bx;
-    float V = Ax * Cy - Ay * Cx;
+    U = Cx * By - Cy * Bx;
+    V = Ax * Cy - Ay * Cx;
     float W = Bx * Ay - By * Ax;
 
     /* Fallback to test against edges using double precision */
@@ -161,7 +163,7 @@ bool ray_triangle_intersect2(in float3 ray_origin,
 
 // Ray-tetrahedron intersection function
 [Differentiable]
-float2 ray_tetrahedron_intersect(float3 orig, float3 dir, Tetrahedra g) {
+bool ray_tetrahedron_intersect(float3 orig, float3 dir, Tetrahedra g, float2 dist) {
     float3 v0 = g.verts[0];
     float3 v1 = g.verts[1];
     float3 v2 = g.verts[2];
@@ -172,24 +174,24 @@ float2 ray_tetrahedron_intersect(float3 orig, float3 dir, Tetrahedra g) {
     float t_exit = -FLT_MAX;
 
     // Check intersection with each face of the tetrahedron
-    float t;
-    if (ray_triangle_intersect(orig, dir, v0, v1, v2, t)) {
+    float t, u, v;
+    if (ray_triangle_intersect(orig, dir, v0, v1, v2, t, u, v)) {
         hit = true;
         t_enter = min(t_enter, t);
         t_exit = max(t_exit, t);
     }
-    if (ray_triangle_intersect(orig, dir, v0, v1, v3, t)) {
+    if (ray_triangle_intersect(orig, dir, v0, v1, v3, t, u, v)) {
         hit = true;
         t_enter = min(t_enter, t);
         t_exit = max(t_exit, t);
     }
-    if (ray_triangle_intersect(orig, dir, v0, v2, v3, t)) {
+    if (ray_triangle_intersect(orig, dir, v0, v2, v3, t, u, v)) {
         hit = true;
         t_enter = min(t_enter, t);
         t_exit = max(t_exit, t);
     }
 
-    if (ray_triangle_intersect(orig, dir, v1, v2, v3, t)) {
+    if (ray_triangle_intersect(orig, dir, v1, v2, v3, t, u, v)) {
         hit = true;
         t_enter = min(t_enter, t);
         t_exit = max(t_exit, t);
@@ -199,11 +201,8 @@ float2 ray_tetrahedron_intersect(float3 orig, float3 dir, Tetrahedra g) {
         t_enter = 0;
     }
 
-    if (hit) {
-        return {max(t_exit - max(t_enter, 0), 0), (t_enter+t_exit)/2};
-    } else {
-        return {-1, 0};
-    }
+    dist = {t_enter, t_exit};
+    return hit;
 }
 
 [Differentiable]

@@ -129,9 +129,16 @@ def point_in_tetrahedron(vertices, tetrahedron, point):
             same_side(v3, v4, v1, v2, point) & 
             same_side(v4, v1, v2, v3, point))
 
+def barycentric_coordinates_matrix(p, a, b, c, d):
+    T = jnp.array([a - d, b - d, c - d]).T
+    v = jnp.linalg.solve(T, p - d)
+    u, v, w = v
+    t = 1 - u - v - w
+    return jnp.array([u, v, w, t])
+
 @jax.jit
 def query_tetrahedra_kernel(t_samples, ray_origins, ray_directions, 
-                           vertices, tetrahedra, densities, colors):
+                           vertices, tetrahedra, densities, vertex_color):
     """
     Kernel function for querying tetrahedra field at sample points.
     
@@ -166,15 +173,21 @@ def query_tetrahedra_kernel(t_samples, ray_origins, ray_directions,
         # Get current tetrahedron data
         tet_indices = tetrahedra[i]
         tet_density = densities[i]
-        tet_color = colors[i]
         
         is_inside = jax.vmap(lambda p: point_in_tetrahedron(vertices, tet_indices, p))(sample_points.reshape(-1, 3)).reshape(batch_shape)
+        coords = jax.vmap(lambda p: barycentric_coordinates_matrix(p, *[vertices[i] for i in tet_indices]))(sample_points.reshape(-1, 3)).reshape(*batch_shape, 4)
+        padding = [1]*(len(coords.shape)-1)
+        tet_color = sum([u * vertex_color[i] for u, i in zip(coords.T, tet_indices)])
+        tet_color = vertex_color[tet_indices[0]].reshape(*padding, 3) * coords[..., 0].reshape(-1, 1) + \
+                    vertex_color[tet_indices[1]].reshape(*padding, 3) * coords[..., 1].reshape(-1, 1) + \
+                    vertex_color[tet_indices[2]].reshape(*padding, 3) * coords[..., 2].reshape(-1, 1) + \
+                    vertex_color[tet_indices[3]].reshape(*padding, 3) * coords[..., 3].reshape(-1, 1)
         
         # Update density and color
         contrib_density = jnp.where(is_inside, tet_density, 0.0)
         contrib_color = jnp.where(
             is_inside[..., None],
-            tet_color[None, None, :],
+            tet_color,
             0.0
         )
         
@@ -201,7 +214,7 @@ def query_tetrahedra_kernel(t_samples, ray_origins, ray_directions,
 
 # @jax.jit
 def render_tetrahedra_volume(ray_origins, ray_directions, tdist,
-                            vertices, tetrahedra, densities, colors, return_extras=False):
+                            vertices, tetrahedra, densities, vertex_color, return_extras=False):
     """
     Render volume defined by colored tetrahedra.
     
@@ -221,7 +234,7 @@ def render_tetrahedra_volume(ray_origins, ray_directions, tdist,
     def query_fn(t_avg):
         return query_tetrahedra_kernel(
             t_avg, ray_origins, ray_directions,
-            vertices, tetrahedra, densities, colors
+            vertices, tetrahedra, densities, vertex_color
         )
     
     return render_quadrature(tdist, query_fn, return_extras=return_extras)
@@ -248,13 +261,11 @@ def construct_camera_rays(viewmatrix, cam_pos, H, W, focal_x, focal_y):
     
     return ray_origins, ray_dirs
 
-@functools.partial(jax.jit, static_argnums=(3, 4))
-def render_camera(vertices, indices, rgbs, height, width, viewmat, fx, fy, tmin, linspace):
+@functools.partial(jax.jit, static_argnums=(4, 5))
+def render_camera(vertices, indices, vertex_color, tet_density, height, width, viewmat, fx, fy, tmin, linspace):
     """Vectorized camera renderer using JAX."""
     # Extract camera position and convert inputs
     cam_pos = jnp.linalg.inv(viewmat)[:3, 3]
-    densities = rgbs[:, 3].reshape(-1, 1)
-    colors = rgbs[:, :3]
     
     # Generate sample points
     # point_dist = jnp.linalg.norm(cam_pos.reshape(1, 3) - vertices, axis=1)
@@ -277,7 +288,7 @@ def render_camera(vertices, indices, rgbs, height, width, viewmat, fx, fy, tmin,
         jax.vmap(
             lambda o, d: render_tetrahedra_volume(
                 o[None], d[None], tdist,
-                vertices, indices, densities, colors,
+                vertices, indices, tet_density.reshape(-1, 1), vertex_color,
                 return_extras=True
             ),
             in_axes=(0, 0)
@@ -287,52 +298,3 @@ def render_camera(vertices, indices, rgbs, height, width, viewmat, fx, fy, tmin,
     
     image, extras = batched_render(ray_origins, ray_directions)
     return image[..., 0, :], extras
-
-# def construct_camera_ray(viewmatrix, cam_pos, pixel_x, pixel_y, W, H, focal_x, focal_y):
-#     """Construct camera rays for given pixels."""
-#     V = viewmatrix[:3, :3].T
-    
-#     ray_dir = torch.tensor([
-#         (pixel_x + 0.5 - W / 2.0) / focal_x,
-#         (pixel_y + 0.5 - H / 2.0) / focal_y,
-#         1.0
-#     ], device=cam_pos.device).float()
-    
-#     ray_dir = ray_dir / torch.norm(ray_dir)
-#     ray_dir = V @ ray_dir
-    
-#     return cam_pos, ray_dir
-
-# def render_camera(vertices, indices, rgbs, 
-#                   viewmat, height, width, fx, fy):
-    
-#     cam_pos = viewmat.inverse()[:3, 3]
-    
-#     # Render using JAX implementation
-#     tdist = np.linspace(0, vertices.abs().max().item(), 10000)
-#     densities = rgbs[:, 3].detach().cpu().numpy()
-#     colors = rgbs[:, :3].detach().cpu().numpy()
-#     ray_origins = cam_pos.cpu().numpy().reshape(1, -1)
-
-#     pixels_x, pixels_y = np.meshgrid(np.arange(height), np.arange(width))
-#     jax_image = np.zeros((height, width, 3))
-    
-#     for i in range(height):
-#         for j in range(width):
-#             _, ray_directions = construct_camera_ray(
-#                 viewmat, cam_pos, pixels_x[i, j], pixels_y[i, j], 
-#                 width, height, fx, fy
-#             )
-#             ray_directions = ray_directions.cpu().numpy()
-#             color, extras = render_tetrahedra_volume(
-#                 ray_origins, 
-#                 ray_directions, 
-#                 tdist,
-#                 vertices.cpu().numpy(), 
-#                 indices.cpu().numpy(), 
-#                 densities.reshape(-1, 1), 
-#                 colors, 
-#                 return_extras=True
-#             )
-#             jax_image[i, j] = color[0, :3]
-#     return jax_image
