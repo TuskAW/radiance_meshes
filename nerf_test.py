@@ -33,7 +33,7 @@ from torch.profiler import profile, ProfilerActivity, record_function
 from utils import test_util
 import cv2
 from utils.graphics_utils import tetra_volume
-
+import termplotlib as tpl
 
 class CustomEncoder(json.JSONEncoder):
     def default(self, o):
@@ -157,21 +157,26 @@ inds = []
 
 num_densify_iter = args.densify_end - args.densify_start
 N = num_densify_iter // args.densify_interval + 1
+S = model.vertices.shape[0]
+ic(N)
 
 def target_num(x):
     if args.clone_schedule == "linear":
-        S = model.vertices.shape[0]
         k = (args.budget - S) // N
         return k * x + S
     elif args.clone_schedule == "quadratic":
-        S = model.vertices.shape[0]
         k = 2 * (args.budget - S) // N
         a = (args.budget - S - k * N) // N**2
         return a * x**2 + k * x + S
     else:
         raise Exception(f"Clone Schedule: {args.clone_schedule} is not supported")
 
-print([target_num(i+1) for i in range(N)])
+xs = list(range(N))
+ys = [target_num(i+1) for i in xs]
+fig = tpl.figure()
+fig.plot(xs, ys, width=100, height=20)
+fig.show()
+
 
 # epath = cam_util.generate_cam_path(train_cameras, 400)
 # sample_camera = epath[175]
@@ -210,7 +215,7 @@ for iteration in progress_bar:
     bg_scale = np.clip(np.exp(x-L) - np.exp(-L), 0, 1)
     # bg_scale = min(max((iteration-1000)/2000, 0), 1)
     bg = bg_scale if iteration < args.densify_end + L//2 else 0
-    # bg = 0
+    bg = 0
     render_pkg = render(camera, model, bg=bg, min_t=model.scene_scaling * 0.3, **args.as_dict())
     # render_pkg = render(camera, model, min_t=model.scene_scaling * 0.1, **args.as_dict())
     # with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
@@ -279,9 +284,11 @@ for iteration in progress_bar:
                 target = camera.original_image.cuda()
                 tet_grad, extras = render_err(target, camera, model, tile_size=args.tile_size, lambda_ssim=args.clone_lambda_ssim)
                 # tet_rgbs_grad = torch.maximum(tet_grad, tet_rgbs_grad)
-                tet_grad = tet_grad * extras['tet_area'].clip(min=1, max=50)
-                # tet_rgbs_grad = tet_grad + tet_rgbs_grad
-                # tet_count += extras['mask']
+                # visible = extras['tet_count'] > 1
+                # tet_rgbs_grad[visible] = (tet_grad + tet_rgbs_grad)[visible]
+                # tet_count += visible
+
+                tet_grad = tet_grad * extras['tet_area'].clip(min=1, max=50).sqrt()
                 tet_rgbs_grad = torch.maximum(tet_grad, tet_rgbs_grad)
         torch.cuda.empty_cache()
         # tet_rgbs_grad = tet_rgbs_grad / tet_count.clip(min=1)
@@ -313,8 +320,9 @@ for iteration in progress_bar:
             # tet_volume = tetra_volume(model.vertices, model.indices)
             # large_enough = tet_volume > args.min_clone_size
             # tet_rgbs_grad = torch.where(large_enough, tet_rgbs_grad, 0)
-            target_addition = target_num((iteration - args.densify_start) // args.densify_interval + 1) - model.vertices.shape[0]
-            ic(target_addition, (iteration - args.densify_start) // args.densify_interval + 1)
+            target = target_num((iteration - args.densify_start) // args.densify_interval + 1)
+            target_addition = target - model.vertices.shape[0]
+            ic(target_addition, (iteration - args.densify_start) // args.densify_interval + 1, target)
             if target_addition > 0:
                 rgbs_threshold = torch.sort(tet_rgbs_grad).values[-min(int(target_addition), tet_rgbs_grad.shape[0])]
                 clone_mask = (tet_rgbs_grad > rgbs_threshold)

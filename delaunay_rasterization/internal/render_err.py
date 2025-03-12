@@ -71,6 +71,7 @@ def render_err(gt_image, camera: Camera, model, tile_size=16, min_t=0.1, lambda_
                                     render_grid.image_width, 1),
                                     dtype=torch.int32, device=device)
     tet_err = torch.zeros((tet_vertices.shape[0]), dtype=torch.float, device=device)
+    tet_count = torch.zeros((tet_vertices.shape[0]), dtype=torch.int32, device=device)
 
     assert (render_grid.tile_height, render_grid.tile_width) in slang_modules.alpha_blend_shaders, (
         'Alpha Blend Shader was not compiled for this tile'
@@ -111,6 +112,7 @@ def render_err(gt_image, camera: Camera, model, tile_size=16, min_t=0.1, lambda_
                     render_grid.grid_height, 1)
     )
     torch.cuda.synchronize()
+    alpha = 1-output_img.permute(2,0,1)[3, ...]
     render_img = output_img.permute(2,0,1)[:3, ...].clip(min=0, max=1)
     l2_err = ((render_img - gt_image)**2).mean(dim=0)
     ssim_err = 1-ssim(render_img, gt_image).mean(dim=0)
@@ -126,6 +128,7 @@ def render_err(gt_image, camera: Camera, model, tile_size=16, min_t=0.1, lambda_
         output_img=output_img,
         pixel_err=pixel_err,
         tet_err=tet_err,
+        tet_count=tet_count,
         n_contributors=n_contributors,
         image_height=render_grid.image_height,
         image_width=render_grid.image_width,
@@ -153,7 +156,9 @@ def render_err(gt_image, camera: Camera, model, tile_size=16, min_t=0.1, lambda_
 
     return tet_err, dict(
         mask = mask,
+        alpha = alpha,
         tet_area = tet_area,
+        tet_count = tet_count,
         pixel_err = pixel_err,
         ssim_err = ssim_err,
         l2_err = l2_err,

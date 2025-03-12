@@ -13,7 +13,7 @@ from icecream import ic
 from utils.train_util import RGB2SH
 import tinycudann as tcnn
 from utils.topo_utils import calculate_circumcenters_torch
-from utils.safe_math import safe_exp, safe_div, safe_sqrt, safe_pow, safe_cos, safe_sin, remove_zero
+from utils.safe_math import safe_exp, safe_div, safe_sqrt, safe_pow, safe_cos, safe_sin, remove_zero, safe_arctan2
 from utils.contraction import contract_mean_std
 from torch_ema import ExponentialMovingAverage
 from utils.contraction import contract_points, inv_contract_points
@@ -64,7 +64,7 @@ def pre_calc_cell_values(vertices, indices, center, scene_scaling: float, per_le
     # scaling = safe_div(base_resolution * per_level_scale**n, sphere_area.reshape(-1, 1, 1)).clip(max=1)
     return cv.float(), scaling
 
-@torch.jit.script
+# @torch.jit.script
 def to_sphere(coordinates):
     return torch.stack([
         safe_cos(coordinates[..., 0]) * safe_sin(coordinates[..., 1]),
@@ -72,25 +72,66 @@ def to_sphere(coordinates):
         safe_cos(coordinates[..., 1]),
     ], dim=-1)
                         
+def lambert_to_sphere(uv, eps: float=torch.finfo(torch.float32).eps):
+    """
+    Inverse Lambert Azimuthal Equal-Area projection (unit sphere),
+    assuming the north pole is at (u=0, v=0).
+    
+    Args:
+        u (float): x-coordinate in the LAEA plane
+        v (float): y-coordinate in the LAEA plane
+    
+    Returns:
+        (x, y, z): 3D coordinates on the unit sphere
+    """
+    ic(uv.shape)
+    uv = l2_normalize_th(uv) * 2
+    u = uv[..., 0]
+    v = uv[..., 1]
+    device = u.device
+    # Radius in the LAEA plane
+    rho = torch.sqrt(u*u + v*v + eps)
+    north_pole_mask = rho < eps
+    north_pole = torch.tensor([0.0, 0.0, 1.0], device=device).reshape(*([1] * (len(uv.shape)-1)), 3)
+
+    # Inverse formulas
+    c = 2.0 * torch.asin((rho / 2.0).clip(min=-1+eps, max=1-eps))
+    phi = (math.pi / 2.0) - c         # Latitude
+    ic(c, phi)
+    lam = safe_arctan2(u, -v)           # Longitude
+    
+    # Convert spherical -> Cartesian on unit sphere
+    cos_phi = safe_cos(phi)
+    x = cos_phi * safe_cos(lam)
+    y = cos_phi * safe_sin(lam)
+    z = safe_sin(phi)
+
+    xyz = torch.stack([x, y, z], dim=-1)
+    xyz = torch.where(north_pole_mask.reshape(-1, 1), north_pole, xyz)
+    
+    return xyz
     
 
-@torch.jit.script
+# @torch.jit.script
 def light_function(base_color, reflection_dirs, light_colors, light_roughness, view_dirs, eps:float=torch.finfo(torch.float32).eps):
     similarity = (reflection_dirs * view_dirs).sum(dim=-1, keepdim=True)
     mask = similarity > 0
     spec_intensity = torch.where(mask, (similarity.clip(min=eps) ** light_roughness), 0)
     spec_color = (light_colors * spec_intensity).sum(dim=1)
-    return base_color + spec_color
+    return torch.nn.functional.softplus(base_color + spec_color + 0.5, beta=10)
 
-@torch.jit.script
+# @torch.jit.script
 def activate_lights(base_color_raw, lights, light_offset: float, dir_offset):
-    base_color = torch.nn.functional.softplus(base_color_raw)
-    light_colors = torch.nn.functional.softplus(lights[:, :, :3]+light_offset)
-    light_roughness = 4*safe_exp(lights[:, :, 3:4]-1).clip(max=100)
-    reflection_dirs = lights[:, :, 4:6] + dir_offset.reshape(1, -1, 2)
+    base_color = base_color_raw
+    light_colors = lights[:, :, :3]#+light_offset
+    # ic(base_color_raw, light_colors)
+    light_roughness = 4*safe_exp(lights[:, :, 3:4]).clip(max=100)
+    # ic(light_roughness)
+    num_lights = lights.shape[1]
+    reflection_dirs = 4*lights[:, :, 4:6] + dir_offset.reshape(1, -1, 2)[:, :num_lights]
     return base_color, light_colors, light_roughness, reflection_dirs
 
-@torch.jit.script
+# @torch.jit.script
 def compute_light_color(base_color_raw, lights, vertices, indices, camera_center, light_offset: float, dir_offset):
     base_color, light_colors, light_roughness, reflection_dirs = activate_lights(
         base_color_raw, lights, light_offset, dir_offset)
@@ -98,6 +139,7 @@ def compute_light_color(base_color_raw, lights, vertices, indices, camera_center
     # light_colors = torch.nn.functional.softplus(lights[:, :, :3]+light_offset)
     # light_roughness = 4*safe_exp(lights[:, :, 3:4]-4).clip(max=100)
     reflection_dirs = to_sphere(reflection_dirs)
+    # reflection_dirs = lambert_to_sphere(reflection_dirs)
     barycenters = vertices[indices].mean(dim=1)
     view_dirs = l2_normalize_th(camera_center - barycenters).reshape(-1, 1, 3)
     return light_function(base_color, reflection_dirs, light_colors, light_roughness, view_dirs)
@@ -126,7 +168,7 @@ class Model(nn.Module):
         self.device = vertices.device
         self.density_offset = density_offset
         self.num_lights = num_lights
-        self.max_lights = 0
+        self.max_lights = 2
         self.light_offset = light_offset
         self.dir_offset = torch.tensor([
             [0, 0],
@@ -269,94 +311,6 @@ class Model(nn.Module):
         }
 
         tinyplypy.write_ply(str(path), data_dict, is_binary=True)
-        # data_dict = tinyplypy.read_ply(str(path))
-        # ic(data_dict['vertex']['x'], xyz[:, 0],
-        #    data_dict['tetrahedron']['r'], rgbs[:, 0], tetra_dict['r'],
-        #    data_dict['tetrahedron']['g'], rgbs[:, 1],
-        #    data_dict['tetrahedron']['b'], rgbs[:, 2],
-        #    rgbs.shape, data_dict['tetrahedron']['r'].shape,
-        #    vertex_dict['x'].shape, data_dict['vertex']['x'].shape)
-        # ic(self.indices, data_dict['tetrahedron']['vertex_indices'])
-
-    # @torch.no_grad
-    # def save2ply(self, path: Path, sample_camera: Camera):
-    #     path.parent.mkdir(exist_ok=True, parents=True)
-        
-    #     xyz = self.vertices.detach().cpu().numpy()
-
-    #     dtype_full = [('x', 'f4'), ('y', 'f4'), ('z', 'f4')]
-        
-    #     elements = np.empty(xyz.shape[0], dtype=dtype_full)
-    #     elements['x'] = xyz[:, 0]
-    #     elements['y'] = xyz[:, 1]
-    #     elements['z'] = xyz[:, 2]
-    #     el = PlyElement.describe(elements, 'vertex')
-
-    #     dtype_tets = [
-    #         ('vertex_indices', 'i4', (4,)),
-    #         # ('vertex_indices', 'O'),
-    #         ('r', 'f4'),
-    #         ('g', 'f4'),
-    #         ('b', 'f4'),
-    #         ('s', 'f4'),
-    #     ]
-    #     for i in range(self.num_lights):
-    #         dtype_tets.extend([
-    #             (f'l{i}_r', 'f4'),
-    #             (f'l{i}_g', 'f4'),
-    #             (f'l{i}_b', 'f4'),
-    #             (f'l{i}_roughness', 'f4'),
-    #             (f'l{i}_phi', 'f4'),
-    #             (f'l{i}_theta', 'f4')])
-    #     dtype_tets = np.dtype(dtype_tets)
-
-    #     # Get the color/scalar values (each element should be a tuple: (r, g, b, s))
-    #     # need to batch this saving process
-    #     N = self.indices.shape[0]
-    #     B = 1_000_000
-    #     rgbs = np.zeros((N, 4 + self.num_lights * 6))
-    #     # rgbs = self.get_cell_values(sample_camera, mask).detach().cpu().numpy()
-    #     start = 0
-        
-    #     vertices = self.vertices
-    #     indices = self.indices
-    #     for start in range(0, indices.shape[0], self.chunk_size):
-    #         end = min(start + self.chunk_size, indices.shape[0])
-            
-    #         output = self.compute_batch_features(vertices, indices, start, end)
-    #         base_color_raw = output[:, :3]
-    #         density = safe_exp(output[:, 3:4]+self.density_offset)
-    #         lights = output[:, 4:].reshape(-1, self.num_lights, 6)
-    #         base_color, light_colors, light_roughness, reflection_dirs = activate_lights(
-    #             base_color_raw, lights, self.light_offset, self.dir_offset)
-    #         rgbs[start:end] = torch.cat([
-    #             base_color,
-    #             density,
-    #             light_colors.reshape(-1, self.num_lights * 3),
-    #             light_roughness.reshape(-1, self.num_lights),
-    #             reflection_dirs.reshape(-1, self.num_lights * 2),
-    #         ], dim=1).cpu().numpy()
-
-
-    #     tet_elements = np.empty(self.indices.shape[0], dtype=dtype_tets)
-    #     # tet_elements['vertex_indices'] = list(self.indices_np)
-    #     tet_elements['vertex_indices'] = self.indices.cpu().numpy()
-    #     tet_elements['r'] = rgbs[:, 0]
-    #     tet_elements['g'] = rgbs[:, 1]
-    #     tet_elements['b'] = rgbs[:, 2]
-    #     tet_elements['s'] = rgbs[:, 3]
-    #     for i in range(self.num_lights):
-    #         tet_elements[f'l{i}_r'] = rgbs[:, 3 + i*6 + 0]
-    #         tet_elements[f'l{i}_g'] = rgbs[:, 3 + i*6 + 1]
-    #         tet_elements[f'l{i}_b'] = rgbs[:, 3 + i*6 + 2]
-    #         tet_elements[f'l{i}_roughness'] = rgbs[:, 3 + i*6 + 3]
-    #         tet_elements[f'l{i}_phi'] = rgbs[:, 3 + i*6 + 4]
-    #         tet_elements[f'l{i}_theta'] = rgbs[:, 3 + i*6 + 5]
-
-    #     # Create the PlyElement description for tetrahedra
-    #     inds = PlyElement.describe(tet_elements, 'tetrahedron')
-
-    #     PlyData([el, inds]).write(str(path))
 
     def inv_contract(self, points):
         return inv_contract_points(points) * self.scene_scaling + self.center
@@ -387,18 +341,18 @@ class Model(nn.Module):
         scaling = torch.linalg.norm(ccenters - center.reshape(1, 3), dim=1, ord=torch.inf).max()
         # ic(center1, center, scaling1, scaling)
 
-        vertices = vertices + torch.randn(*vertices.shape) * 1e-3
-        v = Del(vertices.shape[0])
-        indices_np, prev = v.compute(vertices.detach().cpu())
-        indices_np = indices_np.numpy()
-        indices_np = indices_np[(indices_np < vertices.shape[0]).all(axis=1)]
-        vertices = vertices[indices_np].mean(dim=1)
-        vertices = vertices + torch.randn(*vertices.shape) * 1e-3
+        # vertices = vertices + torch.randn(*vertices.shape) * 1e-3
+        # v = Del(vertices.shape[0])
+        # indices_np, prev = v.compute(vertices.detach().cpu())
+        # indices_np = indices_np.numpy()
+        # indices_np = indices_np[(indices_np < vertices.shape[0]).all(axis=1)]
+        # vertices = vertices[indices_np].mean(dim=1)
+        # vertices = vertices + torch.randn(*vertices.shape) * 1e-3
 
-        # repeats = 3
-        # vertices = vertices.reshape(-1, 1, 3).expand(-1, repeats, 3)
-        # vertices = vertices + torch.randn(*vertices.shape) * 1e-1
-        # vertices = vertices.reshape(-1, 3)
+        repeats = 3
+        vertices = vertices.reshape(-1, 1, 3).expand(-1, repeats, 3)
+        vertices = vertices + torch.randn(*vertices.shape) * 1e-1
+        vertices = vertices.reshape(-1, 3)
 
         vertices = nn.Parameter(vertices.cuda())
         model = Model(vertices, center, scaling, **kwargs)

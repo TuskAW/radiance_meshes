@@ -360,6 +360,7 @@ void kern_calc_tet_err(TensorView<int32_t> sorted_gauss_idx,
                   TensorView<float> rgbs,
                   TensorView<float> final_pixel_state,
                   TensorView<float> tet_err,
+                  TensorView<int32_t> tet_count,
                   TensorView<int32_t> n_contributors,
                   Camera cam,
                   no_diff float min_t,
@@ -427,7 +428,9 @@ void kern_calc_tet_err(TensorView<int32_t> sorted_gauss_idx,
                 float err = current_pixel_state.a * tetra_ctrl.rgba.a * pixel_err;
                 // printf("(%i: %f, %f, %f)", g_idx, current_pixel_state.a, tetra_ctrl.rgba.a, pixel_err);
                 float old_val;
+                int32_t old_ival;
                 tet_err.InterlockedAdd(g_idx, err, old_val);
+                tet_count.InterlockedAdd(g_idx, 1, old_ival);
                 // tet_err.InterlockedMax(g_idx, err, old_val);
 
             }
@@ -446,6 +449,7 @@ void calc_tet_err(TensorView<int32_t> sorted_gauss_idx,
                  TensorView<float> output_img,
                  TensorView<float> pixel_err,
                  TensorView<float> tet_err,
+                 TensorView<int32_t> tet_count,
                  TensorView<int32_t> n_contributors,
                  int grid_height,
                  int grid_width,
@@ -485,6 +489,7 @@ void calc_tet_err(TensorView<int32_t> sorted_gauss_idx,
         rgbs,
         output_img,
         tet_err,
+        tet_count,
         n_contributors,
         cam,
         min_t,
