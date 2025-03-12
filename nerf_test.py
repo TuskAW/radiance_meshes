@@ -288,7 +288,7 @@ for iteration in progress_bar:
                 # tet_rgbs_grad[visible] = (tet_grad + tet_rgbs_grad)[visible]
                 # tet_count += visible
 
-                tet_grad = tet_grad * extras['tet_area'].clip(min=1, max=50).sqrt()
+                # tet_grad = tet_grad * extras['tet_area'].clip(min=1, max=50)#.sqrt()
                 tet_rgbs_grad = torch.maximum(tet_grad, tet_rgbs_grad)
         torch.cuda.empty_cache()
         # tet_rgbs_grad = tet_rgbs_grad / tet_count.clip(min=1)

@@ -112,7 +112,7 @@ def lambert_to_sphere(uv, eps: float=torch.finfo(torch.float32).eps):
     return xyz
     
 
-# @torch.jit.script
+@torch.jit.script
 def light_function(base_color, reflection_dirs, light_colors, light_roughness, view_dirs, eps:float=torch.finfo(torch.float32).eps):
     similarity = (reflection_dirs * view_dirs).sum(dim=-1, keepdim=True)
     mask = similarity > 0
@@ -120,7 +120,7 @@ def light_function(base_color, reflection_dirs, light_colors, light_roughness, v
     spec_color = (light_colors * spec_intensity).sum(dim=1)
     return torch.nn.functional.softplus(base_color + spec_color + 0.5, beta=10)
 
-# @torch.jit.script
+@torch.jit.script
 def activate_lights(base_color_raw, lights, light_offset: float, dir_offset):
     base_color = base_color_raw
     light_colors = lights[:, :, :3]#+light_offset
@@ -131,13 +131,10 @@ def activate_lights(base_color_raw, lights, light_offset: float, dir_offset):
     reflection_dirs = 4*lights[:, :, 4:6] + dir_offset.reshape(1, -1, 2)[:, :num_lights]
     return base_color, light_colors, light_roughness, reflection_dirs
 
-# @torch.jit.script
+@torch.jit.script
 def compute_light_color(base_color_raw, lights, vertices, indices, camera_center, light_offset: float, dir_offset):
     base_color, light_colors, light_roughness, reflection_dirs = activate_lights(
         base_color_raw, lights, light_offset, dir_offset)
-    # base_color = torch.nn.functional.softplus(base_color_raw)
-    # light_colors = torch.nn.functional.softplus(lights[:, :, :3]+light_offset)
-    # light_roughness = 4*safe_exp(lights[:, :, 3:4]-4).clip(max=100)
     reflection_dirs = to_sphere(reflection_dirs)
     # reflection_dirs = lambert_to_sphere(reflection_dirs)
     barycenters = vertices[indices].mean(dim=1)
@@ -341,18 +338,18 @@ class Model(nn.Module):
         scaling = torch.linalg.norm(ccenters - center.reshape(1, 3), dim=1, ord=torch.inf).max()
         # ic(center1, center, scaling1, scaling)
 
-        # vertices = vertices + torch.randn(*vertices.shape) * 1e-3
-        # v = Del(vertices.shape[0])
-        # indices_np, prev = v.compute(vertices.detach().cpu())
-        # indices_np = indices_np.numpy()
-        # indices_np = indices_np[(indices_np < vertices.shape[0]).all(axis=1)]
-        # vertices = vertices[indices_np].mean(dim=1)
-        # vertices = vertices + torch.randn(*vertices.shape) * 1e-3
+        vertices = vertices + torch.randn(*vertices.shape) * 1e-3
+        v = Del(vertices.shape[0])
+        indices_np, prev = v.compute(vertices.detach().cpu())
+        indices_np = indices_np.numpy()
+        indices_np = indices_np[(indices_np < vertices.shape[0]).all(axis=1)]
+        vertices = vertices[indices_np].mean(dim=1)
+        vertices = vertices + torch.randn(*vertices.shape) * 1e-3
 
-        repeats = 3
-        vertices = vertices.reshape(-1, 1, 3).expand(-1, repeats, 3)
-        vertices = vertices + torch.randn(*vertices.shape) * 1e-1
-        vertices = vertices.reshape(-1, 3)
+        # repeats = 1
+        # vertices = vertices.reshape(-1, 1, 3).expand(-1, repeats, 3)
+        # vertices = vertices + torch.randn(*vertices.shape) * 1e-1
+        # vertices = vertices.reshape(-1, 3)
 
         vertices = nn.Parameter(vertices.cuda())
         model = Model(vertices, center, scaling, **kwargs)
