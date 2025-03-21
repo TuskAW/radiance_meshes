@@ -43,16 +43,23 @@ float tukey_power_ladder(float x, float p) {
 }
 
 [Differentiable]
+float safe_exp4alpha(float x) {
+    return safe_clip(safe_exp(x), 0, 1);
+}
+
+[Differentiable]
 float moment_0_int(float a, float b, float s1) {
-    return safe_div((1 - safe_exp(s1*(a - b))),s1);
+    return safe_div((1 - safe_exp4alpha(s1*(a - b))),s1);
 }
 [Differentiable]
 float moment_1_int(float a, float b, float s1) {
-    return safe_div((a*s1 - (b*s1 + 1)*safe_exp(s1*(a - b)) + 1),s1*s1);
+    return safe_div((a*s1 - (b*s1 + 1)*safe_exp4alpha(s1*(a - b)) + 1),s1*s1);
 }
 [Differentiable]
 float self_dist(float a, float b, float s) {
-    return safe_div((2*s*(a - b)*safe_exp(s*(a + 2*b)) + safe_exp(3*b*s) - safe_exp(s*(2*a + b)))*safe_exp(-3*b*s),s*s*s);
+    float ds = s * (a-b);
+    return safe_div((2 * s * (a-b) * safe_exp4alpha(ds) + 1 - safe_exp4alpha(2*ds)), s*s*s);
+    // return safe_div((2*s*(a - b)*safe_exp(s*(a + 2*b)) + safe_exp(3*b*s) - safe_exp(s*(2*a + b)))*safe_exp(-3*b*s),s*s*s);
 }
 
 [Differentiable]
@@ -66,16 +73,20 @@ DistortionState5 update_distortion_state(
 {
     float start = tukey_power_ladder(dist.x*pre_multi, ladder_p);
     float end = tukey_power_ladder(dist.y*pre_multi, ladder_p);
+    float scaling = 1;//safe_div(end-start, dist.y-dist.x);
 
-    float m0 = T * moment_0_int(start, end, density);
-    float m1 = T * moment_1_int(start, end, density);
+    float m0 = T * moment_0_int(start, end, density*scaling);
+    float m1 = T * moment_1_int(start, end, density*scaling);
+    if (abs(m0) > 1e6){
+        printf("(%f,%f,%f,%f,%f)", m0, m1, start, end, density);
+    }
 
     DistortionState5 new_state;
     new_state.x = old_state.x + 2.0f * m1 * old_state.z;
     new_state.y = old_state.y + 2.0f * m0 * old_state.w;
     new_state.z = old_state.z + m0;
     new_state.w = old_state.w + m1;
-    new_state.v = old_state.v + T * T * self_dist(start, end, density);
+    new_state.v = old_state.v + T * T * self_dist(start, end, density*scaling);
 
     return new_state;
 }
@@ -90,16 +101,19 @@ DistortionState5 undo_distortion_state(
 {
     float start = tukey_power_ladder(dist.x*pre_multi, ladder_p);
     float end = tukey_power_ladder(dist.y*pre_multi, ladder_p);
+    // float start = dist.x;
+    // float end = dist.y;
+    float scaling = 1;//safe_div(end-start, dist.y-dist.x);
 
-    float m0 = T * moment_0_int(start, end, density);
-    float m1 = T * moment_1_int(start, end, density);
+    float m0 = T * moment_0_int(start, end, density*scaling);
+    float m1 = T * moment_1_int(start, end, density*scaling);
 
     DistortionState5 old_state;
     old_state.z = new_state.z - m0;
     old_state.w = new_state.w - m1;
     old_state.x = new_state.x - 2.0f * m1 * old_state.z;
     old_state.y = new_state.y - 2.0f * m0 * old_state.w;
-    old_state.v = new_state.v - T * T * self_dist(start, end, density);
+    old_state.v = new_state.v - T * T * self_dist(start, end, density*scaling);
     return old_state;
 }
 
@@ -138,9 +152,10 @@ AlphaOut update_alpha_out(AlphaOut prev, CtrlPt ctrl, no_diff float pre_multi, n
 }
 
 AlphaOut undo_alpha_out(AlphaOut curr, CtrlPt ctrl, no_diff float pre_multi, no_diff float ladder_p) {
-    float T = curr.rgba.a;
+    float4 pix_state = undo_pixel_state(curr.rgba, ctrl.rgba);
+    float T = pix_state.a;
     return {
-        undo_pixel_state(curr.rgba, ctrl.rgba),
+        pix_state,
         undo_distortion_state(curr.distortion_state, T, ctrl.density, ctrl.dist, pre_multi, ladder_p)
     };
 }

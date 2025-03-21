@@ -213,11 +213,14 @@ def render(camera: Camera, model, bg=0, cell_values=None, tile_size=16, min_t=0.
         min_t,
         camera.fovy,
         camera.fovx)
-    distortion_loss = (distortion_img[:, :, 0] - distortion_img[:, :, 1]) + distortion_img[:, :, 4]
+    alpha = 1-image_rgb.permute(2,0,1)[3, ...]
+    distortion_loss = ((distortion_img[:, :, 0] - distortion_img[:, :, 1]) + distortion_img[:, :, 4])# / alpha.clip(min=1e-3)
+    # ic(distortion_img)
     # torch.cuda.synchronize()
     # dt2 = (time.time() - st)
     # print(dt1, dt2, 1/(dt1+dt2))
     # image_rgb = image_rgb + (1-image_rgb[..., 3:4]) * bg * torch.rand_like(image_rgb)
+    # ic(distortion_loss.mean(), distortion_loss.max())
     
     render_pkg = {
         'render': image_rgb.permute(2,0,1)[:3, ...],

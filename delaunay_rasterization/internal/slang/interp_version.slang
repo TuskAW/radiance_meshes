@@ -72,13 +72,13 @@ CtrlPt evaluate_tetra_interp(
     bool hit = ray_tetrahedron_intersect_fused(
         ray_o, ray_d, verts, dist);
 
-    float exit = dist.y;
     float enter = max(dist.x, t_min);
+    float exit = max(dist.y, enter);
     float dt = max(dist.y - enter, 0.0f);
     float intersection_t = 0.5*(exit+enter);
 
     if (!hit) {
-        return { (float4)(0.f, 0.f, 0.f, 0.f), {enter, exit}, g.density };
+        return { (float4)(0.f, 0.f, 0.f, 0.f), {0.f, 0.f}, g.density };
     } else {
         float3x3 T = transpose(float3x3(verts[0] - verts[3], verts[1] - verts[3], verts[2] - verts[3]));
         float3 uvw_enter = SolveLinearSystem(T, enter * ray_d + ray_o - verts[3]);
