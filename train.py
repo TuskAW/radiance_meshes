@@ -79,6 +79,7 @@ args.image_folder = "images_4"
 args.eval = True
 args.dataset_path = Path("/optane/nerf_datasets/360/bicycle")
 args.output_path = Path("output/test/")
+args.ckpt = ""
 args.delaunay_start = 100000
 
 args.log2_hashmap_size = 22
@@ -137,9 +138,12 @@ train_cameras, test_cameras, scene_info = loader.load_dataset(
 args.num_samples = min(len(train_cameras), args.num_samples)
 
 device = torch.device('cuda')
-model = Model.init_from_pcd(scene_info.point_cloud, train_cameras, device,
-                            max_lights = args.num_lights if args.sh_interval <= 0 else 0,
-                            **args.as_dict())
+if len(args.ckpt) > 0: 
+    model = Model.load_ckpt(Path(args.ckpt), device)
+else:
+    model = Model.init_from_pcd(scene_info.point_cloud, train_cameras, device,
+                                max_lights = args.num_lights if args.sh_interval <= 0 else 0,
+                                **args.as_dict())
 min_t = model.scene_scaling * args.base_min_t
 
 tet_optim = TetOptimizer(model, **args.as_dict())

@@ -11,6 +11,7 @@ from utils import test_util
 from utils.args import Args
 from utils import cam_util
 import mediapy
+from icecream import ic
 
 args = Args()
 args.tile_size = 16
@@ -26,22 +27,24 @@ if args.use_ply:
     from models.tet_color import Model
     model = Model.load_ply(args.output_path / "ckpt.ply", device)
 else:
-    from models.ingp_color import Model
+    from models.ingp_density import Model
     model = Model.load_ckpt(args.output_path, device)
 
 # model.light_offset = -1
 train_cameras, test_cameras, scene_info = loader.load_dataset(
     args.dataset_path, args.image_folder, data_device="cuda", eval=args.eval)
 
+ic(model.min_t)
+
 with torch.no_grad():
     epath = cam_util.generate_cam_path(train_cameras, 400)
     eimages = []
     for camera in tqdm(epath):
-        render_pkg = render(camera, model, tile_size=args.tile_size)
+        render_pkg = render(camera, model, tile_size=args.tile_size, tmin=model.min_t)
         image = render_pkg['render']
         image = image.permute(1, 2, 0)
         image = image.detach().cpu().numpy()
         eimages.append(image)
 
 mediapy.write_video(args.output_path / "rotating.mp4", eimages)
-test_util.evaluate_and_save(model, test_cameras, args.output_path, args.tile_size)
+test_util.evaluate_and_save(model, test_cameras, args.output_path, args.tile_size, min_t=model.min_t)

@@ -63,6 +63,21 @@ struct Tetrahedra : IDifferentiable
     float3[4] verts;
 };
 
+bool is_planar(Tetrahedra tetra)
+{
+    float3 v0 = tetra.verts[0];
+    float3 v1 = tetra.verts[1];
+    float3 v2 = tetra.verts[2];
+    float3 v3 = tetra.verts[3];
+    float3 edge1 = v1 - v0;
+    float3 edge2 = v2 - v0;
+    float3 normal = normalize(cross(edge1, edge2));
+
+    float distance = dot(normal, (v3 - v0));
+
+    return abs(distance) < 1e-3;
+}
+
 int max_dim(float3 v) {
     if (v.x > v.y && v.x > v.z) return 0;
     if (v.y > v.z) return 1;

@@ -53,13 +53,22 @@ float moment_0_int(float a, float b, float s1) {
 }
 [Differentiable]
 float moment_1_int(float a, float b, float s1) {
-    return safe_div((a*s1 - (b*s1 + 1)*safe_exp4alpha(s1*(a - b)) + 1),s1*s1);
+    if (s1 < 1e-4) {
+        return 0.5 * (b * b - a * a);
+    } else {
+        return (a*s1 - (b*s1 + 1)*safe_exp4alpha(s1*(a - b)) + 1) / (s1*s1);
+    }
 }
 [Differentiable]
 float self_dist(float a, float b, float s) {
-    float ds = s * (a-b);
-    return safe_div((2 * s * (a-b) * safe_exp4alpha(ds) + 1 - safe_exp4alpha(2*ds)), s*s*s);
-    // return safe_div((2*s*(a - b)*safe_exp(s*(a + 2*b)) + safe_exp(3*b*s) - safe_exp(s*(2*a + b)))*safe_exp(-3*b*s),s*s*s);
+    float dt = (a - b);
+    float ds = s * dt;
+    if (abs(ds) < 1e-4) {
+        return -1 / 3 * pow(dt, 3);
+    } else {
+        return (( 2 * s * (a - b) * safe_exp(ds) - safe_expm1(2 * ds)) /
+                (s * s * s));
+    }
 }
 
 float scale_dist(float x) {

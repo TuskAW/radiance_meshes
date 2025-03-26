@@ -162,10 +162,13 @@ void bw_expm1(inout DifferentialPair<float> v, float.Differential R) {
   v = DifferentialPair<float>(v.p, -exp(v.p) * R);
 }
 
-[BackwardDerivative(bw_expm1)]
 float _expm1(float v) {
   __intrinsic_asm "expm1($0)";
-  //return 1-exp(v);
+}
+
+[BackwardDerivative(bw_expm1)]
+float safe_expm1(float v) {
+    return no_diff _expm1(v);
 }
 
 void bw_log1mexp(inout DifferentialPair<float> v, float.Differential R) {

@@ -48,7 +48,8 @@ def pre_calc_cell_values(vertices, indices, center, scene_scaling: float, per_le
     scaling = torch.erf(erf_x)
     # sphere_area = 4/3*math.pi*cr**3
     # scaling = safe_div(base_resolution * per_level_scale**n, sphere_area.reshape(-1, 1, 1)).clip(max=1)
-    return cv.float(), scaling
+    x = (cv.float()/2 + 1)/2
+    return x, scaling
 
 class Model(nn.Module):
     def __init__(self,
@@ -119,6 +120,10 @@ class Model(nn.Module):
         self.update_triangulation()
 
     def load_ckpt(path: Path, device):
+
+        data_dict = tinyplypy.read_ply(str(path / "ckpt.ply"))
+        tet_data = data_dict["tetrahedron"]
+        indices = tet_data["vertex_indices"]  # shape (N,4)
         ckpt_path = path / "ckpt.pth"
         config_path = path / "alldata.json"
         config = Args.load_from_json(str(config_path))
@@ -130,8 +135,12 @@ class Model(nn.Module):
         base_colors = ckpt['vertex_base_color']
         lights = ckpt['vertex_lights']
         model = Model(vertices.to(device), base_colors, lights, ckpt['center'], ckpt['scene_scaling'], **config.as_dict())
+        model.max_lights = model.num_lights
         model.load_state_dict(ckpt)
         model.contract_vertices = temp
+        model.min_t = model.scene_scaling * config.base_min_t
+        model.indices = torch.as_tensor(indices).cuda()
+        model.boundary_tets = torch.zeros((indices.shape[0]), dtype=bool, device='cuda')
         return model
 
     @torch.no_grad
@@ -258,10 +267,10 @@ class Model(nn.Module):
         vertex_base_color = vertex_base_color.reshape(-1, 1, 3).expand(-1, repeats, 3).reshape(-1, 3)
 
         # add sphere
-        # pcd_scaling = torch.linalg.norm(vertices - center.cpu().reshape(1, 3), dim=1, ord=torch.inf).max()
-        # x = l2_normalize_th(torch.randn((1000, 3))) * 1.2 * pcd_scaling.cpu() + center.reshape(1, 3).cpu()
-        # vertices = torch.cat([vertices, x], dim=0)
-        # vertex_base_color = torch.cat([vertex_base_color, torch.zeros_like(x).to(vertex_base_color.device)], dim=0)
+        pcd_scaling = torch.linalg.norm(vertices - center.cpu().reshape(1, 3), dim=1, ord=2).max()
+        x = l2_normalize_th(torch.randn((1000, 3))) * 1.2 * pcd_scaling.cpu() + center.reshape(1, 3).cpu()
+        vertices = torch.cat([vertices, x], dim=0)
+        vertex_base_color = torch.cat([vertex_base_color, torch.zeros_like(x).to(vertex_base_color.device)], dim=0)
 
         # vertex_base_color = torch.ones_like(vertices, device=device) * 0.1
         # vertex_lights = torch.zeros((vertices.shape[0], num_lights*6)).to(device)
@@ -278,8 +287,8 @@ class Model(nn.Module):
         cv, scaling =  pre_calc_cell_values(
             vertices, indices[start:end], self.center, self.scene_scaling,
             self.per_level_scale, self.L, self.scale_multi, self.base_resolution)
-        x = (cv/2 + 1)/2
-        output = checkpoint(self.encoding, x, use_reentrant=True).float()
+        # cv, scaling = self.cache_cv[start:end], self.cache_scaling[start:end]
+        output = checkpoint(self.encoding, cv, use_reentrant=True).float()
         output = output.reshape(-1, self.dim, self.L)
 
         output = output * scaling
@@ -295,10 +304,13 @@ class Model(nn.Module):
         finite_tets = (indices_np < verts.shape[0]).all(axis=1)
         self.boundary_tets = torch.zeros((indices_np.shape[0]), dtype=bool, device='cuda')
         v = prev.get_boundary_tets(verts_c)
-        self.boundary_tets[v] = True
+        # self.boundary_tets[v] = True
         indices_np = indices_np[finite_tets]
         self.boundary_tets = self.boundary_tets[finite_tets]
         self.indices = torch.as_tensor(indices_np).cuda()
+        # self.cache_cv, self.cache_scaling = pre_calc_cell_values(verts, self.indices, self.center,
+        #                                                          self.scene_scaling, self.per_level_scale,
+        #                                                          self.L, self.scale_multi, self.base_resolution)
  
         if alpha_threshold > 0:
             # Compute the density mask in chunks
@@ -319,14 +331,12 @@ class Model(nn.Module):
                 edge_lengths = torch.stack([
                     torch.norm(v0 - v1, dim=1), torch.norm(v0 - v2, dim=1), torch.norm(v0 - v3, dim=1),
                     torch.norm(v1 - v2, dim=1), torch.norm(v1 - v3, dim=1), torch.norm(v2 - v3, dim=1)
-                ], dim=0).max(dim=0)[0]
+                ], dim=0).max(dim=0).values
                 
                 # Compute the maximum possible alpha using the largest edge length
                 alpha = 1 - torch.exp(-density * edge_lengths)
                 # mask_list.append(density > density_threshold)
                 mask_list.append(alpha > alpha_threshold)
-                
-                # start = end
             
             # Concatenate mask and apply it
             mask = torch.cat(mask_list, dim=0) & ~self.boundary_tets

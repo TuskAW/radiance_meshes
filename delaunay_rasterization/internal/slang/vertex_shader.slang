@@ -161,6 +161,9 @@ void vertex_shader(TensorView<int32_t> indices,
     Camera cam = no_diff load_camera(world_view_transform, K, cam_pos, fovy, fovx, image_height, image_width);
     uint4 virtual_tet = load_virtual_tetrahedra(g_idx, indices);
     Tetrahedra tet = load_tetrahedra(vertices, virtual_tet);
+    if (is_planar(tet)) {
+        return;
+    }
 
     Tetrahedra camspace_tet = tet2camspace(tet, cam);
     no_diff float3 minv, maxv;
