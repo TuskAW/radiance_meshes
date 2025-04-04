@@ -131,16 +131,18 @@ offset = radii.unsqueeze(1) * (math.cos(theta) * e1 + math.sin(theta) * e2)
 vertices = centers
 thetas = torch.zeros((N, 1), device=device)
 
+points_cpu = vertices.detach().cpu().numpy()
+delaunay = Delaunay(points_cpu)
+indices = torch.tensor(delaunay.simplices, device=vertices.device).int()
 for i in range(M):
-    points_cpu = vertices.detach().cpu().numpy()
-    delaunay = Delaunay(points_cpu)
-    indices = torch.tensor(delaunay.simplices, device=vertices.device).int()
-    J = contraction_jacobian(vertices)
-    J_d = torch.linalg.det(J).abs().reshape(-1, 1)
 
+    tets = vertices[indices]
+    circumcenter, radius = calculate_circumcenters_torch(tets.double())
+    # clipped_circumcenter = project_points_to_tetrahedra(circumcenter.float(), tets)
+    clipped_circumcenter = circumcenter
     mask = torch.linalg.norm(vertices, dim=1) < 1
-    sensitivity = topo_utils.compute_vertex_sensitivity(indices.cuda(), vertices.cuda(), handle_contraction=True).cpu()
-    scaling = J_d * 5e+2/sensitivity.reshape(-1, 1).clip(min=1)/ radii.reshape(-1, 1)
+    _, sensitivity = topo_utils.compute_vertex_sensitivity(indices.cuda(), vertices.cuda(), circumcenter.cuda())
+    scaling = 5e-1/sensitivity.cpu().reshape(-1, 1).clip(min=1)/ radii.reshape(-1, 1).cpu()
 
     thetas += 2 * math.pi * scaling
     # Compute the offset for each vertex along its circle
@@ -148,28 +150,18 @@ for i in range(M):
     vertices = centers + offset
 
 
-    # vertices += velocity * 0.005
-    # points_cpu = vertices.detach().cpu().numpy()
-    # delaunay = Delaunay(points_cpu)
-    # indices = torch.tensor(delaunay.simplices, device=vertices.device).int()
-    # sensitivity = topo_utils.compute_vertex_sensitivity(indices.cuda(), vertices.cuda()).cpu()
-    # scaling = 1e+3/sensitivity.reshape(-1, 1).clip(min=1e-3)
-    # vertices = vertices + scaling * vel
-
     model = lambda x: x
     model.vertices = vertices
 
-    # Convert to tensor and move to cpu
+    # tets = vertices[indices]
+    # circumcenter, radius = calculate_circumcenters_torch(tets.double())
+    cc = contract_points(clipped_circumcenter)
+    # cc = circumcenter
+    # frames.append(circumcenter)
+    frames.append(cc)
     points_cpu = vertices.detach().cpu().numpy()
     delaunay = Delaunay(points_cpu)
     indices = torch.tensor(delaunay.simplices, device=vertices.device).int()
-
-    tets = vertices[indices]
-    circumcenter, radius = calculate_circumcenters_torch(tets.double())
-    cc = contract_points(circumcenter)
-    # clipped_circumcenter = project_points_to_tetrahedra(circumcenter.float(), tets)
-    # frames.append(circumcenter)
-    frames.append(cc)
 
 # Convert each frame to numpy arrays for plotting
 frames_np = [frame.cpu().numpy() for frame in frames]

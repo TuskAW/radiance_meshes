@@ -42,7 +42,8 @@ def pre_calc_cell_values(vertices, indices, center, scene_scaling: float):
     device = vertices.device
     tets = vertices[indices]
     circumcenter, radius = calculate_circumcenters_torch(tets.double())
-    clipped_circumcenter = project_points_to_tetrahedra(circumcenter.float(), tets)
+    # clipped_circumcenter = project_points_to_tetrahedra(circumcenter.float(), tets)
+    clipped_circumcenter = circumcenter
     normalized = (clipped_circumcenter - center) / scene_scaling
     cv, cr = contract_mean_std(normalized, radius / scene_scaling)
     # sphere_area = 4/3*math.pi*cr**3
@@ -218,9 +219,8 @@ class Model(nn.Module):
 
         # add sphere
         pcd_scaling = torch.linalg.norm(vertices - center.cpu().reshape(1, 3), dim=1, ord=2).max()
-        # x = l2_normalize_th(torch.randn((1000, 3))) * 1.2 * pcd_scaling.cpu() + center.reshape(1, 3).cpu()
-        # vertices = torch.cat([vertices, x], dim=0)
-        # vertex_base_color = torch.cat([vertex_base_color, torch.zeros_like(x).to(vertex_base_color.device)], dim=0)
+        x = l2_normalize_th(torch.randn((1000, 3))) * 1.2 * pcd_scaling.cpu() + center.reshape(1, 3).cpu()
+        vertices = torch.cat([vertices, x], dim=0)
         vertex_lights = torch.zeros((vertices.shape[0], ((num_lights+1)**2-1)*3)).to(device)
 
         vertices = nn.Parameter(vertices.cuda())

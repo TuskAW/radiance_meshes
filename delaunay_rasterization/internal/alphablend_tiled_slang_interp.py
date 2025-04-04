@@ -9,7 +9,7 @@ class AlphaBlendTiledRender(torch.autograd.Function):
     @staticmethod
     def forward(ctx, 
                 sorted_tetra_idx, tile_ranges,
-                indices, vertices, vertex_color, tet_density, render_grid,
+                indices, vertices, tet_density, render_grid,
                 world_view_transform, K, cam_pos, pre_multi, ladder_p, min_t,
                 fovy, fovx, device="cuda"):
         distortion_img = torch.zeros((render_grid.image_height, 
@@ -35,7 +35,6 @@ class AlphaBlendTiledRender(torch.autograd.Function):
             tile_ranges=tile_ranges,
             indices=indices,
             vertices=vertices,
-            vertex_color=vertex_color,
             tet_density=tet_density,
             output_img=output_img,
             distortion_img=distortion_img,
@@ -66,7 +65,7 @@ class AlphaBlendTiledRender(torch.autograd.Function):
         # ic(n_contributors.float().mean(), n_contributors.max())
 
         ctx.save_for_backward(sorted_tetra_idx, tile_ranges,
-                              indices, vertices, vertex_color, tet_density, 
+                              indices, vertices, tet_density, 
                               output_img, distortion_img, n_contributors,
                               world_view_transform, K, cam_pos)
 
@@ -82,7 +81,7 @@ class AlphaBlendTiledRender(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_output_img, grad_distortion_img):
         (sorted_tetra_idx, tile_ranges, 
-         indices, vertices, vertex_color, tet_density,
+         indices, vertices, tet_density,
          output_img, distortion_img, n_contributors,
          world_view_transform, K, cam_pos) = ctx.saved_tensors
         render_grid = ctx.render_grid
@@ -93,7 +92,6 @@ class AlphaBlendTiledRender(torch.autograd.Function):
         pre_multi = ctx.pre_multi
 
         vertices_grad = torch.zeros_like(vertices)
-        vertex_color_grad = torch.zeros_like(vertex_color)
         tet_density_grad = torch.zeros_like(tet_density)
 
         assert (render_grid.tile_height, render_grid.tile_width) in slang_modules.alpha_blend_shaders_interp, (
@@ -111,7 +109,6 @@ class AlphaBlendTiledRender(torch.autograd.Function):
             indices=indices,
             vertices=(vertices, vertices_grad),
             # rgbs=(rgbs, rgbs_grad),
-            vertex_color=(vertex_color, vertex_color_grad),
             tet_density=(tet_density, tet_density_grad),
             output_img=(output_img, grad_output_img),
             distortion_img=(distortion_img, grad_distortion_img),
@@ -141,5 +138,5 @@ class AlphaBlendTiledRender(torch.autograd.Function):
         # torch.cuda.synchronize()
         # ic("abb", time.time()-st)
         
-        return (None, None, None, vertices_grad, vertex_color_grad, tet_density_grad, 
+        return (None, None, None, vertices_grad, tet_density_grad, 
                 None, None, None, None, None, None, None, None, None)

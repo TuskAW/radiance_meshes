@@ -432,13 +432,17 @@ def compute_vertex_sensitivity(indices: torch.Tensor, vertices: torch.Tensor,
     # normalized_circumcenter = (ccc - center.reshape(1, 3))/scaling
     J = contraction_jacobian(normalized_circumcenter).float()
     J_d = torch.det(J).abs()
-    jacobian_matrix_sens = J_d/compute_spectral_norm3(a).clip(min=1e-5)
+    # J_d is lower the further from the center it is.
+    # sensitivity is lower the further we are from the origin
+    # Then, divide by the spectral norm, because we actually find the min eigen value for A, instead of max eigen of A^-1
+    jacobian_matrix_sens = J_d.clip(min=1e-5)/compute_spectral_norm3(a).clip(min=1e-5)
     num_vertices = vertices.shape[0]
 
     vertex_sensitivity = torch.full((num_vertices,), 0.0, device=vertices.device)
     indices = indices.long()
 
-    reduce_type = "amax"
+    reduce_type = "sum"
+    # reduce_type = "amax"
     vertex_sensitivity.scatter_reduce_(dim=0, index=indices[..., 0], src=jacobian_matrix_sens, reduce=reduce_type)
     vertex_sensitivity.scatter_reduce_(dim=0, index=indices[..., 1], src=jacobian_matrix_sens, reduce=reduce_type)
     vertex_sensitivity.scatter_reduce_(dim=0, index=indices[..., 2], src=jacobian_matrix_sens, reduce=reduce_type)

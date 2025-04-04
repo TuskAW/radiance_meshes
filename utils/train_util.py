@@ -181,7 +181,6 @@ def render(camera: Camera, model, bg=0, cell_values=None, tile_size=16, min_t=0.
             normed_cc, cell_values[mask] = model.get_cell_values(camera, mask)
         else:
             normed_cc, cell_values = model.get_cell_values(camera)
-    vertex_color = torch.empty([1], device=device)
     # vertex_color, cell_values = model.get_cell_values(camera)
     # cell_values = model.get_cell_values(camera)
     with torch.no_grad():
@@ -193,13 +192,7 @@ def render(camera: Camera, model, bg=0, cell_values=None, tile_size=16, min_t=0.
         scaling = clip_multi/sensitivity.reshape(-1, 1).clip(min=1)
     vertices = train_util.ClippedGradients.apply(model.vertices, scaling)
 
-    # torch.cuda.synchronize()
-    # ic("vt", time.time()-st)
-    # retain_grad fails if called with torch.no_grad() under evaluation
-    try:
-        vs_tetra.retain_grad()
-    except:
-        pass
+    # vs_tetra.retain_grad()
     # tet_vertices = vertices[model.indices]
     # verts_trans = point2image(model.vertices, world_view_transform, K, cam_pos)
     # st = time.time()
@@ -208,7 +201,6 @@ def render(camera: Camera, model, bg=0, cell_values=None, tile_size=16, min_t=0.
         tile_ranges,
         model.indices,
         vertices,
-        vertex_color,
         cell_values,
         render_grid,
         world_view_transform,
@@ -235,7 +227,6 @@ def render(camera: Camera, model, bg=0, cell_values=None, tile_size=16, min_t=0.
         'alpha': image_rgb.permute(2,0,1)[3, ...],
         'distortion_img': distortion_img,
         'distortion_loss': distortion_loss.mean(),
-        'viewspace_points': vs_tetra,
         'visibility_filter': mask,
         'circumcenters': circumcenter,
         'normed_cc': normed_cc,
@@ -260,8 +251,8 @@ def compute_perturbation(indices, vertices, cc, density, mask, cc_sensitivity, l
     
     # Compute the maximum possible alpha using the largest edge length
     alpha = 1 - torch.exp(-density[mask].reshape(-1, 1) * edge_lengths.reshape(-1, 1))
-    # perturb = lr * torch.sigmoid(-k*(alpha - t)) / cc_sensitivity.reshape(-1, 1) * torch.randn((inds.shape[0], 3), device=device)
-    perturb = lr * torch.sigmoid(-k*(alpha - t)) * torch.randn((inds.shape[0], 3), device=device)
+    perturb = lr * torch.sigmoid(-k*(alpha - t)) / cc_sensitivity.reshape(-1, 1) * torch.randn((inds.shape[0], 3), device=device)
+    # perturb = lr * torch.sigmoid(-k*(alpha - t)) * torch.randn((inds.shape[0], 3), device=device)
     target = cc - perturb
     return torch.linalg.norm(cc - target.detach(), dim=-1).mean()
 

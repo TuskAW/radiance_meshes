@@ -117,8 +117,7 @@ SplatTetrahedra_interp load_tet_alphablend_interp(
     int32_t        g_idx,
     DiffTensorView vertices,
     TensorView<int32_t> indices,
-    DiffTensorView tet_density,
-    DiffTensorView vertex_color)
+    DiffTensorView tet_density)
 {
     uint4 virtual_tet = load_virtual_tetrahedra(g_idx, indices);
     Tetrahedra tet    = load_tetrahedra(vertices, virtual_tet);
@@ -146,12 +145,6 @@ SplatTetrahedra_interp load_tet_alphablend_interp(
         float(tet_density[g_idx, 12]),
     };
 
-    // // For vertex colors, we read color from each vertex index in the tetrahedron:
-    // float3 c0 = read_t3_float3(virtual_tet.x, vertex_color);
-    // float3 c1 = read_t3_float3(virtual_tet.y, vertex_color);
-    // float3 c2 = read_t3_float3(virtual_tet.z, vertex_color);
-    // float3 c3 = read_t3_float3(virtual_tet.w, vertex_color);
-
     SplatTetrahedra_interp result = {
         tet, density, {c0, c1, c2, c3}
     };
@@ -163,19 +156,11 @@ SplatTetrahedra_interp load_tet_alphablend_interp(
     int32_t        g_idx,
     TensorView<float> vertices,
     TensorView<int32_t> indices,
-    TensorView<float>  tet_density,
-    TensorView<float>  vertex_color)
+    TensorView<float>  tet_density)
 {
     uint4 virtual_tet = load_virtual_tetrahedra(g_idx, indices);
     Tetrahedra tet    = load_tetrahedra(vertices, virtual_tet);
 
-    // float density = tet_density[g_idx];  // or read_float(g_idx, tet_density) if you prefer
-
-    // // For each vertex index:
-    // float3 c0 = read_t3_float3(virtual_tet.x, vertex_color);
-    // float3 c1 = read_t3_float3(virtual_tet.y, vertex_color);
-    // float3 c2 = read_t3_float3(virtual_tet.z, vertex_color);
-    // float3 c3 = read_t3_float3(virtual_tet.w, vertex_color);
     float density = float(tet_density[g_idx, 0]);
     float3 c0 = {
         float(tet_density[g_idx, 1]),

@@ -195,7 +195,6 @@ AlphaOut undo_alpha_out(AlphaOut curr, CtrlPt ctrl, no_diff float pre_multi, no_
 AlphaOut alpha_blend(TensorView<int32_t> sorted_gauss_idx,
                    TensorView<int32_t> indices,
                    DiffTensorView vertices,
-                   DiffTensorView vertex_color,
                    DiffTensorView tet_density,
                    DiffTensorView final_pixel_state,
                    DiffTensorView final_distortion_state,
@@ -243,7 +242,7 @@ AlphaOut alpha_blend(TensorView<int32_t> sorted_gauss_idx,
         if (tile_idx_start + splat_pointer_offset < tile_idx_end)
         {
             uint32_t coll_id = uint32_t(sorted_gauss_idx[tile_idx_start + splat_pointer_offset]);
-            collected_splats[thread_rank] = load_tet_alphablend_interp(coll_id, vertices, indices, tet_density, vertex_color);
+            collected_splats[thread_rank] = load_tet_alphablend_interp(coll_id, vertices, indices, tet_density);
         }
         AllMemoryBarrierWithGroupSync();
         if (thread_active) {
@@ -278,7 +277,6 @@ AlphaOut alpha_blend(TensorView<int32_t> sorted_gauss_idx,
 void bwd_alpha_blend(TensorView<int32_t> sorted_gauss_idx,
                      TensorView<int32_t> indices,
                      DiffTensorView vertices,
-                     DiffTensorView vertex_color,
                      DiffTensorView tet_density,
                      DiffTensorView final_pixel_state,
                      DiffTensorView final_distortion_state,
@@ -338,7 +336,7 @@ void bwd_alpha_blend(TensorView<int32_t> sorted_gauss_idx,
         {
             uint32_t coll_id = uint32_t(sorted_gauss_idx[tile_idx_end - progress - 1]);
             collected_idx[thread_rank] = coll_id;
-            collected_splats[thread_rank] = load_tet_alphablend_interp(coll_id, vertices, indices, tet_density, vertex_color);
+            collected_splats[thread_rank] = load_tet_alphablend_interp(coll_id, vertices, indices, tet_density);
         }
         AllMemoryBarrierWithGroupSync();
         if (is_inside) {
@@ -372,7 +370,7 @@ void bwd_alpha_blend(TensorView<int32_t> sorted_gauss_idx,
                     d_ao = dp_ao.getDifferential();
                     bwd_diff(evaluate_tetra_interp)(dp_g, dp_ray_o, dp_ray_d, min_t, dp_tetra_ctrl.d);
                     // bwd_diff(evaluate_tetra_2D)(dp_g, cam, min_t, dp_center_pix_coord, dp_tetra_ctrl.d);
-                    bwd_diff(load_tet_alphablend_interp)(g_idx, vertices, indices, tet_density, vertex_color, dp_g.d);
+                    bwd_diff(load_tet_alphablend_interp)(g_idx, vertices, indices, tet_density, dp_g.d);
 
                 }
             }
@@ -388,7 +386,6 @@ void splat_tiled(TensorView<int32_t> sorted_gauss_idx,
                  TensorView<int32_t> tile_ranges,
                  TensorView<int32_t> indices,
                  DiffTensorView vertices,
-                 DiffTensorView vertex_color,
                  DiffTensorView tet_density,
                  DiffTensorView output_img,
                  DiffTensorView distortion_img,
@@ -425,7 +422,6 @@ void splat_tiled(TensorView<int32_t> sorted_gauss_idx,
         sorted_gauss_idx,
         indices,
         vertices,
-        vertex_color,
         tet_density,
         output_img,
         distortion_img,
@@ -457,7 +453,6 @@ void splat_tiled(TensorView<int32_t> sorted_gauss_idx,
 void kern_calc_tet_err(TensorView<int32_t> sorted_gauss_idx,
                   TensorView<int32_t> indices,
                   TensorView<float> vertices,
-                  TensorView<float> vertex_color,
                   TensorView<float> tet_density,
                   TensorView<float> final_pixel_state,
                   TensorView<float> tet_err,
@@ -507,7 +502,7 @@ void kern_calc_tet_err(TensorView<int32_t> sorted_gauss_idx,
         {
             uint32_t coll_id = uint32_t(sorted_gauss_idx[tile_idx_end - progress - 1]);
             collected_idx[thread_rank] = coll_id;
-            collected_splats[thread_rank] = load_tet_alphablend_interp(coll_id, vertices, indices, tet_density, vertex_color);
+            collected_splats[thread_rank] = load_tet_alphablend_interp(coll_id, vertices, indices, tet_density);
         }
         AllMemoryBarrierWithGroupSync();
         if (is_inside) {
@@ -546,7 +541,6 @@ void calc_tet_err(TensorView<int32_t> sorted_gauss_idx,
                  TensorView<int32_t> tile_ranges,
                  TensorView<int32_t> indices,
                  TensorView<float> vertices,
-                 TensorView<float> vertex_color,
                  TensorView<float> tet_density,
                  TensorView<float> output_img,
                  TensorView<float> pixel_err,
@@ -588,7 +582,6 @@ void calc_tet_err(TensorView<int32_t> sorted_gauss_idx,
         sorted_gauss_idx,
         indices,
         vertices,
-        vertex_color,
         tet_density,
         output_img,
         tet_err,
