@@ -399,7 +399,9 @@ class Model(nn.Module):
     def sh_up(self):
         self.max_lights = min(self.num_lights, self.max_lights+1)
 
+    @torch.no_grad()
     def update_triangulation(self, alpha_threshold=0.05/255):
+        torch.cuda.empty_cache()
         verts = self.vertices
         v = Del(verts.shape[0])
         indices_np, prev = v.compute(verts.detach().cpu().double())
@@ -416,6 +418,7 @@ class Model(nn.Module):
             del indices_np, prev, mask
         else:
             del indices_np, prev
+        torch.cuda.empty_cache()
 
     def __len__(self):
         return self.vertices.shape[0]

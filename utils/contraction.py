@@ -63,6 +63,20 @@ def contraction_jacobian(means):
     jc_means = jc_means.view(list(means.shape) + [means.shape[-1]])
     return jc_means
 
+def contraction_jacobian_in_chunks(means, chunk_size=100000):
+    jac_list = []
+    means_flat = means.view(-1, means.shape[-1])
+    num_chunks = (means_flat.shape[0] + chunk_size - 1) // chunk_size
+    for i in range(num_chunks):
+        chunk = means_flat[i*chunk_size : (i+1)*chunk_size]
+        # Compute the jacobian for this chunk
+        jac_chunk = torch.vmap(torch.func.jacrev(contract_points))(chunk)
+        jac_list.append(jac_chunk)
+        # Optionally, you can call torch.cuda.empty_cache() here if needed
+    jc_means = torch.cat(jac_list, dim=0)
+    jc_means = jc_means.view(list(means.shape) + [means.shape[-1]])
+    return jc_means
+
 def track_gaussians(fn, means, covs, densities):
     jc_means = torch.vmap(torch.func.jacrev(fn))(means.view(-1, means.shape[-1]))
     jc_means = jc_means.view(list(means.shape) + [means.shape[-1]])
