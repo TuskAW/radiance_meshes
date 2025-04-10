@@ -185,7 +185,8 @@ void vertex_shader(TensorView<int32_t> indices,
     double3 C = { double(tet.verts[2].x), double(tet.verts[2].y), double(tet.verts[2].z) };
     double3 D = { double(tet.verts[3].x), double(tet.verts[3].y), double(tet.verts[3].z) };
     double3 P = { double(cam.position.x), double(cam.position.y), double(cam.position.z) };
-    float sort_depth = float(power_of_circumsphere(A, B, C, D, P));
+    double3 circumcenter;
+    float sort_depth = float(power_of_circumsphere(A, B, C, D, P, circumcenter));
     if (sort_depth < -1e19) return;
 
     bool contains_ray_origin = point_in_tetrahedron(tet, cam.position) || sort_depth < 0;
@@ -218,7 +219,7 @@ void vertex_shader(TensorView<int32_t> indices,
     Tetrahedra image_tet = camspace_tet2image_w_depth(camspace_tet, cam);
     float area = tet_area(image_tet, center_ray.d, cam);
 
-    float3 circumcenter = calculate_circumcenter(tet);
+    // float3 circumcenter = calculate_circumcenter(tet);
     // float radius = length(circumcenter - tet.verts[0]);
     // float circum_dist = length(circumcenter - cam.position);
     // float sort_depth = circum_dist * circum_dist - radius * radius;
@@ -234,8 +235,8 @@ void vertex_shader(TensorView<int32_t> indices,
 
     out_vs.storeOnce(uint2(g_idx, 2), min(max(sort_depth, FLT_MIN), FLT_MAX));
 
-    out_circumcenter.storeOnce(uint2(g_idx, 0), circumcenter.x);
-    out_circumcenter.storeOnce(uint2(g_idx, 1), circumcenter.y);
-    out_circumcenter.storeOnce(uint2(g_idx, 2), circumcenter.z);
+    out_circumcenter.storeOnce(uint2(g_idx, 0), (float)circumcenter.x);
+    out_circumcenter.storeOnce(uint2(g_idx, 1), (float)circumcenter.y);
+    out_circumcenter.storeOnce(uint2(g_idx, 2), (float)circumcenter.z);
 
 }

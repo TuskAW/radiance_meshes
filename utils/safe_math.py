@@ -1,5 +1,6 @@
 import torch
 import math
+import numpy as np
 
 # -------------------------------------------------------------------
 # Constants (float32 equivalents to jax's np.finfo(np.float32))
@@ -226,8 +227,7 @@ safe_log = generate_safe_fn(
 # grad: d/dx (exp(x)) = exp(x)
 # -------------------------------------------------------------------
 # We clamp x to [min_val, log(max_val)] 
-# Similar to the JAX snippet: np.nextafter(np.log(max_val), 0)
-log_max_val_approx = float(torch.log(torch.tensor(max_val, dtype=torch.float32)))
+log_max_val_approx = torch.nextafter(torch.log(torch.tensor(max_val, dtype=torch.float32)), torch.tensor(0.0))
 
 def _exp_backward_fn(x_clip, y, grad_output):
     # derivative is exp(x_clip) * grad (which is y)

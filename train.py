@@ -140,8 +140,10 @@ args.lambda_noise = 5e9
 
 args.lambda_ssim = 0.2
 args.base_min_t = 0.01
-args.sample_cam = 1
+args.sample_cam = 4
 args.data_device = 'cpu'
+args.lambda_alpha = 0.0
+args.lambda_color = 0.0
 
 # Bilateral grid arguments
 # Bilateral grid parameters
@@ -238,7 +240,7 @@ if args.use_bilateral_grid:
 video_writer = cv2.VideoWriter(str(args.output_path / "training.mp4"), cv2.CAP_FFMPEG, cv2.VideoWriter_fourcc(*'avc1'), 30,
                                pad_hw2even(sample_camera.image_width, sample_camera.image_height))
 
-cc_locations = []
+# cc_locations = []
 progress_bar = tqdm(range(args.iterations))
 torch.cuda.empty_cache()
 for iteration in progress_bar:
@@ -314,14 +316,13 @@ for iteration in progress_bar:
     # --------------------------------------------------------------
 
     mask = render_pkg['mask']
+    cc = render_pkg['normed_cc']
     st = time.time()
     alphas = compute_alpha(model.indices, model.vertices, render_pkg['density'], mask)
-    # loss += args.alphas.mean()
-
+    loss += args.lambda_alpha * alphas.mean()
     loss.backward()
     # tet_optim.clip_gradient(args.grad_clip)
 
-    cc = render_pkg['normed_cc']
     v_perturb = compute_v_perturbation(
         model.indices, model.vertices, cc, alphas,
         mask, render_pkg['cc_sensitivity'],
@@ -337,9 +338,9 @@ for iteration in progress_bar:
 
     if do_delaunay:
         circumcenters = model.get_circumcenters()
-        cc_locations.append(
-            model.contract(circumcenters.detach()).cpu().numpy()
-        )
+        # cc_locations.append(
+        #     model.contract(circumcenters.detach()).cpu().numpy()
+        # )
         tet_optim.vertex_optim.step()
         tet_optim.vertex_optim.zero_grad()
 
@@ -378,25 +379,27 @@ for iteration in progress_bar:
 
 
         sampled_cameras = [train_cameras[i] for i in densification_sampler.nextids()]
-        tet_rgbs_grad = torch.zeros((model.indices.shape[0]), device=device)
-        tet_count = torch.zeros((model.indices.shape[0]), device=device)
+        tet_moments = torch.zeros((model.indices.shape[0], 4), device=device)
+        tet_count = torch.zeros((model.indices.shape[0], 1), device=device)
         for camera in sampled_cameras:
             with torch.no_grad():
                 target = camera.original_image.cuda()
-                tet_grad, extras = render_err(target, camera, model, tile_size=args.tile_size, lambda_ssim=args.clone_lambda_ssim)
+                tet_err, extras = render_err(target, camera, model, tile_size=args.tile_size, lambda_ssim=args.clone_lambda_ssim)
+                # tet_err = tet_err / extras['tet_area'].clip(min=1).reshape(-1, 1)
                 visible = extras['tet_count'] > args.min_tet_count
                 if args.p_norm > 10:
-                    tet_rgbs_grad[visible] = torch.maximum(tet_grad, tet_rgbs_grad)[visible]
+                    replace = (tet_err[:, 3] > tet_moments[:, 3]) & visible
+                    tet_moments[replace] = tet_err[replace]
                 else:
                     tet_count += visible
-                    tet_rgbs_grad[visible] = (tet_rgbs_grad + tet_grad.abs().clip(min=eps).pow(args.p_norm))[visible]
-                del tet_grad, extras
+                    tet_moments[visible] = (tet_moments + tet_err.abs().clip(min=eps).pow(args.p_norm))[visible]
+                del tet_err, extras
         torch.cuda.empty_cache()
         if args.p_norm < 10:
-            tet_rgbs_grad = tet_rgbs_grad / tet_count.clip(min=1)
+            tet_moments = tet_moments / tet_count.clip(min=1)
 
         with torch.no_grad():
-            render_tensor = tet_rgbs_grad
+            render_tensor = tet_moments[:, 3]
             tensor_min, tensor_max = render_tensor.min(), render_tensor.max()
             normalized_tensor = (render_tensor - tensor_min) / (tensor_max - tensor_min)
 
@@ -418,8 +421,9 @@ for iteration in progress_bar:
             target = target_num((iteration - args.densify_start) // args.densify_interval + 1)
             target_addition = target - model.vertices.shape[0]
             if target_addition > 0:
-                rgbs_threshold = torch.sort(tet_rgbs_grad).values[-min(int(target_addition), tet_rgbs_grad.shape[0])]
-                clone_mask = (tet_rgbs_grad > rgbs_threshold)
+                tet_err_weight = tet_moments[:, 3]
+                rgbs_threshold = torch.sort(tet_err_weight).values[-min(int(target_addition), tet_moments.shape[0])]
+                clone_mask = (tet_err_weight > rgbs_threshold)
 
                 binary_color = torch.zeros_like(tet_grad_color)
                 binary_color[clone_mask, 0] = normalized_tensor[clone_mask]
@@ -432,11 +436,12 @@ for iteration in progress_bar:
 
                 clone_indices = model.indices[clone_mask]
 
-                tet_optim.split(clone_indices, args.split_mode, args.prune_alpha_thres)
+                split_point = safe_math.safe_div(tet_moments[:, :3], tet_moments[:, 3:4])[clone_mask]
+                tet_optim.split(clone_indices, split_point, args.split_mode, args.prune_alpha_thres)
 
 
-                out = f"#RGBS Clone: {(tet_rgbs_grad > rgbs_threshold).sum()} "
-                out += f"∇RGBS: {tet_rgbs_grad.mean()} "
+                out = f"#RGBS Clone: {(tet_err_weight > rgbs_threshold).sum()} "
+                out += f"∇RGBS: {tet_err_weight.mean()} "
                 out += f"target_addition: {target_addition} "
                 print(out)
             gc.collect()
@@ -464,31 +469,31 @@ video_writer.release()
 
 
 
-def pad_point_clouds(cc_locations):
-    """
-    Pads all frames in cc_locations to have the same number of points
-    as the frame with the maximum number of points, padding with zeros.
+# def pad_point_clouds(cc_locations):
+#     """
+#     Pads all frames in cc_locations to have the same number of points
+#     as the frame with the maximum number of points, padding with zeros.
 
-    Parameters:
-        cc_locations (list or array): List/array of frames (num_frames, num_points, 3)
+#     Parameters:
+#         cc_locations (list or array): List/array of frames (num_frames, num_points, 3)
 
-    Returns:
-        np.ndarray: Padded cc_locations of shape (num_frames, max_num_points, 3)
-    """
-    max_num_points = max(frame.shape[0] for frame in cc_locations)
+#     Returns:
+#         np.ndarray: Padded cc_locations of shape (num_frames, max_num_points, 3)
+#     """
+#     max_num_points = max(frame.shape[0] for frame in cc_locations)
 
-    padded_frames = []
-    for frame in cc_locations:
-        num_points = frame.shape[0]
-        if num_points < max_num_points:
-            padding = np.zeros((max_num_points - num_points, 3))
-            padded_frame = np.vstack([frame, padding])
-        else:
-            padded_frame = frame
+#     padded_frames = []
+#     for frame in cc_locations:
+#         num_points = frame.shape[0]
+#         if num_points < max_num_points:
+#             padding = np.zeros((max_num_points - num_points, 3))
+#             padded_frame = np.vstack([frame, padding])
+#         else:
+#             padded_frame = frame
 
-        padded_frames.append(padded_frame)
+#         padded_frames.append(padded_frame)
 
-    return np.array(padded_frames)
+#     return np.array(padded_frames)
 
 # # cc_locations: (num_frames, num_points, 3) numpy array
 # plotter = pv.Plotter()

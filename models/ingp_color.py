@@ -8,7 +8,7 @@ from gDel3D.build.gdel3d import Del
 from torch import nn
 from icecream import ic
 from utils.train_util import RGB2SH
-from utils.topo_utils import calculate_circumcenters_torch, project_points_to_tetrahedra, fibonacci_spiral_on_sphere
+from utils.topo_utils import calculate_circumcenters_torch, project_points_to_tetrahedra, fibonacci_spiral_on_sphere, calc_barycentric
 from utils.safe_math import safe_exp, safe_div, safe_sqrt, safe_pow, safe_cos, safe_sin, remove_zero, safe_arctan2
 from utils.contraction import contract_mean_std
 from utils.contraction import contract_points, inv_contract_points
@@ -25,6 +25,8 @@ import numpy as np
 from utils.args import Args
 import tinyplypy
 from utils.phong_shading import to_sphere, activate_lights, light_function, compute_tet_color
+
+torch.set_float32_matmul_precision('high')
 
 def init_weights(m, gain):
     if isinstance(m, nn.Linear):
@@ -176,7 +178,7 @@ class Model(nn.Module):
         return cv
 
     def get_cell_values(self, camera: Camera, mask=None,
-                        circumcenters=None, radii=None):
+                        all_circumcenters=None, radii=None):
         indices = self.indices[mask] if mask is not None else self.indices
         vertices = self.vertices
 
@@ -192,7 +194,7 @@ class Model(nn.Module):
         start = 0
         for start in range(0, indices.shape[0], self.chunk_size):
             end = min(start + self.chunk_size, indices.shape[0])
-            circumcenters, normalized, output = self.compute_batch_features(vertices, indices, start, end)
+            circumcenters, normalized, output = self.compute_batch_features(vertices, indices, start, end, circumcenters=all_circumcenters)
             dvrgbs = activate_output(output, indices[start:end],
                                      vertex_color_raw, circumcenters,
                                      vertices, self.density_offset)
@@ -242,13 +244,19 @@ class Model(nn.Module):
         model = Model(vertices, ext_vertices, vertex_lights, center, scaling, **kwargs)
         return model
 
-    def compute_batch_features(self, vertices, indices, start, end):
-        circumcenter, cv, cr, normalized =  pre_calc_cell_values(
-            vertices, indices[start:end], self.center, self.scene_scaling)
+    def compute_batch_features(self, vertices, indices, start, end, circumcenters=None):
+        if circumcenters is None:
+            circumcenter, cv, cr, normalized =  pre_calc_cell_values(
+                vertices, indices[start:end], self.center, self.scene_scaling)
+        else:
+            circumcenter = circumcenters[start:end]
+            normalized = (circumcenter - self.center) / self.scene_scaling
+            # ic(circumcenter.shape, vertices[indices[start:end, 0]].shape, circumcenters.shape, start, end)
+            radius = torch.linalg.norm(circumcenter - vertices[indices[start:end, 0]], dim=-1)
+            cv, cr = contract_mean_std(normalized, radius / self.scene_scaling)
         x = (cv/2 + 1)/2
         output = checkpoint(self.backbone, x, cr, use_reentrant=True).float()
         return circumcenter, normalized, output
-
 
     def load_ckpt(path: Path, device):
         data_dict = tinyplypy.read_ply(str(path / "ckpt.ply"))
@@ -444,7 +452,7 @@ class TetOptimizer:
                  final_vertices_lr: float=4e-7,
                  vertices_lr_delay_multi: float=0.01,
                  weight_decay=1e-10,
-                 net_weight_decay=1e-3,
+                 lambda_color=1e-10,
                  split_std: float = 0.5,
                  lights_lr: float=1e-4,
                  lr_delay: int = 500,
@@ -452,6 +460,7 @@ class TetOptimizer:
                  vert_lr_delay: int = 500,
                  **kwargs):
         self.weight_decay = weight_decay
+        self.lambda_color = lambda_color
         self.optim = optim.CustomAdam([
             {"params": model.backbone.encoding.parameters(), "lr": encoding_lr, "name": "encoding"},
         ], ignore_param_list=["encoding", "network"], betas=[0.9, 0.99], eps=1e-15)
@@ -525,7 +534,7 @@ class TetOptimizer:
         self.model.update_triangulation()
 
     @torch.no_grad()
-    def split(self, clone_indices, split_mode, alpha_threshold):
+    def split(self, clone_indices, split_point, split_mode, alpha_threshold):
         device = self.model.device
         clone_vertices = self.model.vertices[clone_indices]
 
@@ -544,6 +553,13 @@ class TetOptimizer:
             barycentric_weights = barycentric / (1e-3+barycentric.sum(dim=1, keepdim=True))
             new_vertex_location = (self.model.vertices[clone_indices] * barycentric_weights).sum(dim=1)
             new_vertex_lights = (self.model.vertex_lights[clone_indices] * barycentric_weights).sum(dim=1)
+        elif split_mode == "split_point":
+            split_point += 1e-3*torch.randn(*split_point.shape, device=self.model.device)
+            new_vertex_location = split_point
+            barycentric_weights = calc_barycentric(split_point, clone_vertices)
+            barycentric_weights = barycentric_weights / (1e-3+barycentric_weights.sum(dim=1, keepdim=True))
+            # new_vertex_location = (self.model.vertices[clone_indices] * barycentric_weights.unsqueeze(-1)).sum(dim=1)
+            new_vertex_lights = (self.model.vertex_lights[clone_indices] * barycentric_weights.unsqueeze(-1)).sum(dim=1)
         else:
             raise Exception(f"Split mode: {split_mode} not supported")
         self.add_points(new_vertex_location, new_vertex_lights)
@@ -569,4 +585,6 @@ class TetOptimizer:
             torch.nn.utils.clip_grad_norm_(module.parameters(), grad_clip, error_if_nonfinite=True)
 
     def regularizer(self):
-        return self.weight_decay * sum([(embed.weight**2).mean() for embed in self.model.backbone.encoding.embeddings])
+        weight_decay = self.weight_decay * sum([(embed.weight**2).mean() for embed in self.model.backbone.encoding.embeddings])
+        sh_decay = self.lambda_color * (self.model.vertex_lights ** 2).mean()
+        return sh_decay + weight_decay

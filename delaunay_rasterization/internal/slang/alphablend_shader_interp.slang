@@ -523,10 +523,17 @@ void kern_calc_tet_err(TensorView<int32_t> sorted_gauss_idx,
                     current_pixel_state = undo_pixel_state(current_pixel_state, tetra_ctrl.rgba);
 
                     float err = current_pixel_state.a * tetra_ctrl.rgba.a * pixel_err;
+                    float surface = tetra_ctrl.dist.x;
+                    float midpt = 0.5 * (tetra_ctrl.dist.x + tetra_ctrl.dist.y);
+                    float contrib = tetra_ctrl.rgba.a * surface + (1 - tetra_ctrl.rgba.a) * midpt;
+                    float3 contrib_pt = contrib * ray.d + ray.o;
                     // printf("(%i: %f, %f, %f)", g_idx, current_pixel_state.a, tetra_ctrl.rgba.a, pixel_err);
                     float old_val;
                     int32_t old_ival;
-                    tet_err.InterlockedAdd(g_idx, err, old_val);
+                    tet_err.InterlockedAdd(uint2(g_idx, 0), err * contrib_pt.x, old_val);
+                    tet_err.InterlockedAdd(uint2(g_idx, 1), err * contrib_pt.y, old_val);
+                    tet_err.InterlockedAdd(uint2(g_idx, 2), err * contrib_pt.z, old_val);
+                    tet_err.InterlockedAdd(uint2(g_idx, 3), err, old_val);
                     tet_count.InterlockedAdd(g_idx, 1, old_ival);
                 }
             }

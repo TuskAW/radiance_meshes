@@ -13,6 +13,8 @@ import torch
 import matplotlib.pyplot as plt
 import numpy as np
 from utils import topo_utils
+from utils.safe_math import safe_exp
+import imageio
 
 from utils.contraction import contract_mean_std
 from gDel3D.build.gdel3d import Del
@@ -88,7 +90,8 @@ def field(xyz, scale=10.5):
     c12 = torch.sin(scale * (x * y * z))
     
     # Stack all coefficients along the last dimension
-    return torch.stack([c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12], dim=-1)
+    out = torch.stack([c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12], dim=-1)
+    return out
 
 def project_points_to_tetrahedra(points, tets):
     """
@@ -190,7 +193,7 @@ for i in range(M):
     output = field(clipped_circumcenter)
     # cv, cr = contract_mean_std(circumcenter, radius)
     # output = field(cv)
-    density = (output[:, 0:1]-1).exp()
+    density = safe_exp(output[:, 0:1]-1)
     field_samples = output[:, 1:]
     vcolors = compute_vertex_colors_from_field(
         vertices[indices].detach(), field_samples.float(), circumcenter.float().detach())
@@ -208,10 +211,12 @@ for i in range(M):
         else:
             return model.vertex_color, model.tet_density
     model.get_cell_values = get_cell_values
+    model.device = 'cuda'
     
     render_pkg = render(camera, model, tile_size=tile_size, min_t=0, ladder_p=1, pre_multi=1)
     torch_image = render_pkg['render'].permute(1, 2, 0)
     image = (torch_image.detach().cpu().numpy() * 255).clip(min=0, max=255).astype(np.uint8)
+    imageio.imwrite('gray.png', image)
     frames.append(image)
 
 mediapy.write_video('frames.mp4', frames)

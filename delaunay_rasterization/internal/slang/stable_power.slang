@@ -17,9 +17,9 @@ inline double maxDistanceAmongPoints(const double3 p1,
 [Differentiable]
 double power_of_circumsphere(
     double3 A, double3 B, double3 C, double3 D,
-    double3 P)
+    double3 P, out double3 center)
 {
-    double3 center;
+    //double3 center;
     double radius;
     // Compute vectors from A to other vertices
     double3 a = B - A;

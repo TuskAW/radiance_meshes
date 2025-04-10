@@ -11,6 +11,26 @@ from utils.contraction import contract_points, contraction_jacobian, contraction
 import math
 
 @torch.jit.script
+def calc_barycentric(points, tets):
+    """
+    points: (N, 3)
+    tets: (N, 4, 3)
+    """
+    v0 = tets[:, 0, :]             # shape (N, 3)
+    T = tets[:, 1:, :] - v0.unsqueeze(1)  # shape (N, 3, 3)
+    T = T.permute(0,2,1)
+
+    # Solve for x: T x = (p - v0)
+    p_minus_v0 = points - v0       # shape (N, 3)
+    x = torch.linalg.solve(T, p_minus_v0.unsqueeze(2)).squeeze(2)  # shape (N, 3)
+
+    # Compute full barycentrics: weight for v0 and for v1,v2,v3.
+    w0 = 1 - x.sum(dim=1, keepdim=True)  # shape (N, 1)
+    bary = torch.cat([w0, x], dim=1)      # shape (N, 4)
+    bary = bary.clip(min=0)
+    return bary
+
+@torch.jit.script
 def project_points_to_tetrahedra(points, tets):
     """
     points: (N, 3)

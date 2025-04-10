@@ -180,16 +180,19 @@ def render(camera: Camera, model, bg=0, cell_values=None, tile_size=16, min_t=0.
         camera.fovy,
         camera.fovx,
         render_grid)
+    extras = {}
     if cell_values is None:
         cell_values = torch.zeros((mask.shape[0], 13), device=circumcenter.device)
         if mask.sum() > 0:
-            normed_cc, cell_values[mask] = model.get_cell_values(camera, mask)
+            normed_cc, cell_values[mask] = model.get_cell_values(camera, mask, circumcenter[mask])
         else:
-            normed_cc, cell_values = model.get_cell_values(camera)
-    with torch.no_grad():
-        tet_sens, sensitivity = topo_utils.compute_vertex_sensitivity(model.indices[mask], model.vertices, normed_cc)
-        scaling = clip_multi*sensitivity.reshape(-1, 1).clip(min=1)
-    vertices = train_util.ClippedGradients.apply(model.vertices, scaling)
+            normed_cc, cell_values = model.get_cell_values(camera, circumcenter)
+        with torch.no_grad():
+            tet_sens, sensitivity = topo_utils.compute_vertex_sensitivity(model.indices[mask], model.vertices, normed_cc)
+            scaling = clip_multi*sensitivity.reshape(-1, 1).clip(min=1)
+        vertices = train_util.ClippedGradients.apply(model.vertices, scaling)
+        extras['normed_cc'] = normed_cc
+        extras['cc_sensitivity'] = tet_sens
 
     image_rgb, distortion_img = AlphaBlendTiledRender.apply(
         sorted_tetra_idx,
@@ -206,7 +209,7 @@ def render(camera: Camera, model, bg=0, cell_values=None, tile_size=16, min_t=0.
         min_t,
         camera.fovy,
         camera.fovx)
-    total_density = distortion_img[:, :, 2].clip(min=1e-6)
+    total_density = (distortion_img[:, :, 2]**2).clip(min=1e-6)
     distortion_loss = (((distortion_img[:, :, 0] - distortion_img[:, :, 1]) + distortion_img[:, :, 4]) / total_density).clip(min=0)
     # ic(sensitivity.min(), sensitivity.max(), distortion_img.mean(dim=0).mean(dim=0), cell_values.min(), vertices.min())
     
@@ -217,11 +220,10 @@ def render(camera: Camera, model, bg=0, cell_values=None, tile_size=16, min_t=0.
         'distortion_loss': distortion_loss.mean(),
         'visibility_filter': mask,
         'circumcenters': circumcenter,
-        'normed_cc': normed_cc,
         'tet_area': tet_area,
-        'cc_sensitivity': tet_sens,
         'density': cell_values[:, 0],
         'mask': mask,
+        **extras
     }
     return render_pkg
 

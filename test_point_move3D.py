@@ -134,7 +134,7 @@ thetas = torch.zeros((N, 1), device=device)
 
 points_cpu = vertices.detach().cpu()
 v = Del(points_cpu.shape[0])
-indices, prev = v.compute(points_cpu)
+indices, prev = v.compute(points_cpu.double())
 mask = (indices < points_cpu.shape[0]).all(axis=1)
 indices = torch.as_tensor(indices[mask])
 border = prev.get_boundary_tets(points_cpu.double())
@@ -149,7 +149,7 @@ for i in range(M):
     # clipped_circumcenter = project_points_to_tetrahedra(circumcenter.float(), tets)
     clipped_circumcenter = circumcenter
     mask = torch.linalg.norm(vertices, dim=1) < 1
-    _, sensitivity = topo_utils.compute_vertex_sensitivity(indices.cuda(), vertices.cuda(), clipped_circumcenter.cuda(), border_mask)
+    _, sensitivity = topo_utils.compute_vertex_sensitivity(indices.cuda(), vertices.cuda(), clipped_circumcenter.cuda())
     scaling = 5e-3/sensitivity.cpu().reshape(-1, 1).clip(min=1)/ radii.reshape(-1, 1).cpu()
 
     thetas += 2 * math.pi * scaling
@@ -174,7 +174,7 @@ for i in range(M):
     indices, prev = v.compute(points_cpu.double())
     mask = (indices < points_cpu.shape[0]).all(axis=1)
     indices = indices[mask]
-    border = prev.get_boundary_tets(points_cpu)
+    border = prev.get_boundary_tets(points_cpu.double())
     border_mask = torch.zeros_like(mask)
     border_mask[border] = True
     border_mask = border_mask[mask]

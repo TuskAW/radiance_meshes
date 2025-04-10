@@ -180,7 +180,7 @@ class VertexShader(torch.autograd.Function):
         return tiles_touched, rect_tile_space, vs_tetra, circumcenter, tet_area
     
     @staticmethod
-    def backward(ctx, grad_tiles_touched, grad_rect_tile_space, grad_vs_tetra, grad_circumcenter):
+    def backward(ctx, grad_tiles_touched, grad_rect_tile_space, grad_vs_tetra, grad_circumcenter, grad_tet_area):
         (indices, vertices, world_view_transform, K, cam_pos,
          tiles_touched, rect_tile_space, vs_tetra, circumcenter, tet_area) = ctx.saved_tensors
         render_grid = ctx.render_grid
@@ -213,4 +213,4 @@ class VertexShader(torch.autograd.Function):
                 blockSize=(256, 1, 1),
                 gridSize=(ceil_div(n_tetra, 256), 1, 1)
         )
-        return grad_indices, grad_vertices, None, None, None, None
+        return grad_indices, grad_vertices, None, None, None, None, None, None
