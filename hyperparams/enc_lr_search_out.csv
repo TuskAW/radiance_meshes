@@ -1,0 +1,7 @@
+test_LPIPS,encoding_lr,densify_start,final_encoding_lr,output_folder,gpu_id,test_PSNR,psnr,final_network_lr,test_SSIM,error,network_lr
+,5.00E-04,4000,5.00E-04,output/nl5.00E-05_fnl5.00E-06_el5.00E-04_fel5.00E-04_ds4000,3,,,5.00E-06,,Process failed and no JSON output file found,5.00E-05
+,1.00E-03,3000,1.00E-03,output/nl1.00E-04_fnl1.00E-05_el1.00E-03_fel1.00E-03_ds3000,2,,,1.00E-05,,Process failed and no JSON output file found,1.00E-04
+0.3494432866573334,1.00E-03,4000,1.00E-03,output/nl1.00E-04_fnl1.00E-05_el1.00E-03_fel1.00E-03_ds4000,1,23.806995391845703,23.347622273798077,1.00E-05,0.6948432326316833,,1.00E-04
+,3.00E-03,3000,3.00E-03,output/nl3.00E-04_fnl3.00E-05_el3.00E-03_fel3.00E-03_ds3000,0,,,3.00E-05,,Process failed and no JSON output file found,3.00E-04
+,3.00E-03,4000,3.00E-03,output/nl3.00E-04_fnl3.00E-05_el3.00E-03_fel3.00E-03_ds4000,1,,,3.00E-05,,Process failed and no JSON output file found,3.00E-04
+,5.00E-04,3000,5.00E-04,output/nl5.00E-05_fnl5.00E-06_el5.00E-04_fel5.00E-04_ds3000,0,,,5.00E-06,,Process failed and no JSON output file found,5.00E-05

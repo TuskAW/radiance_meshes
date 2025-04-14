@@ -7,7 +7,7 @@ import torch
 from torch.autograd.functional import jacobian
 from icecream import ic
 from submodules.spectral_norm3 import compute_spectral_norm3
-from utils.contraction import contract_points, contraction_jacobian, contraction_jacobian_in_chunks
+from utils.contraction import contract_points, contraction_jacobian, contraction_jacobian_d_in_chunks
 import math
 
 @torch.jit.script
@@ -104,7 +104,6 @@ def calculate_circumcenters(vertices):
     # Return absolute position
     return vertices[..., 0, :] + relative_circumcenter, radius
 
-import torch
 
 def calculate_circumcenters_torch(vertices: torch.Tensor):
     """
@@ -194,8 +193,7 @@ def compute_vertex_sensitivity(indices: torch.Tensor, vertices: torch.Tensor,
     tetra_points = vertices[indices]  # Shape: (M, 4, 3)
     a = tetra_points[..., 1:, :] - tetra_points[..., 0:1, :]  # Shape: (3, 3)
 
-    J = contraction_jacobian_in_chunks(normalized_circumcenter).float()
-    J_d = torch.det(J).abs()
+    J_d = contraction_jacobian_d_in_chunks(normalized_circumcenter).float()
     # J_d is lower the further from the center it is.
     # sensitivity is lower the further we are from the origin
     # Then, divide by the spectral norm, because we actually find the min eigen value for A, instead of max eigen of A^-1

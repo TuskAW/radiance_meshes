@@ -108,18 +108,19 @@ args.grad_clip = 1e-2
 # Vertex Settings
 args.lr_delay = 50
 args.vert_lr_delay = 50
-args.vertices_lr = 1e-3
-args.final_vertices_lr = 1e-5
+args.vertices_lr = 1e-4
+args.final_vertices_lr = 5e-8
 args.max_steps = 30000
 args.vertices_lr_delay_multi = 1e-8
 args.vertices_beta = [0.9, 0.99]
 args.contract_vertices = False
-args.clip_multi = 1e-3
+args.start_clip_multi = 1e-4
+args.end_clip_multi = 1e-4
 args.delaunay_start = 17000
 args.freeze_start = 25000
 
 # Distortion Settings
-args.lambda_dist = 1e-5
+args.lambda_dist = 1e-4
 args.ladder_p = -0.25
 args.pre_multi = 10000
 
@@ -127,7 +128,7 @@ args.pre_multi = 10000
 args.p_norm = 100
 args.clone_lambda_ssim = 0.2
 args.split_std = 0.1
-args.split_mode = "barycentric"
+args.split_mode = "split_point"
 args.clone_schedule = "quadratic"
 args.min_tet_count = 4
 args.prune_alpha_thres = 0
@@ -140,17 +141,17 @@ args.lambda_noise = 5e9
 
 args.lambda_ssim = 0.2
 args.base_min_t = 0.01
-args.sample_cam = 4
+args.sample_cam = 24
 args.data_device = 'cpu'
 args.lambda_alpha = 0.0
-args.lambda_color = 0.0
+args.lambda_color = 1e-4
 
 # Bilateral grid arguments
 # Bilateral grid parameters
 args.use_bilateral_grid = False
 args.bilateral_grid_shape = [16, 16, 8]
 args.bilateral_grid_lr = 0.003  # Match gsplat's default
-args.lambda_tv: float = 10.0
+args.lambda_tv = 10.0
 
 args = Args.from_namespace(args.get_parser().parse_args())
 
@@ -248,7 +249,7 @@ for iteration in progress_bar:
     do_delaunay = iteration % delaunay_interval == 0 and iteration < args.freeze_start
     do_cloning = max(iteration - args.densify_start, 0) % args.densify_interval == 0 and args.densify_end > iteration >= args.densify_start
     do_sh_up = not args.sh_interval == 0 and iteration % args.sh_interval == 0 and iteration > 0
-    do_sh_step = iteration % 1 == 0
+    do_sh_step = iteration % 16 == 0
 
     if len(inds) == 0:
         inds = list(range(len(train_cameras)))
@@ -260,7 +261,7 @@ for iteration in progress_bar:
 
     st = time.time()
     bg = 0
-    render_pkg = render(camera, model, bg=bg, min_t=min_t, **args.as_dict())
+    render_pkg = render(camera, model, bg=bg, min_t=min_t, clip_multi=tet_optim.clip_multi, **args.as_dict())
     # with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
     #          profile_memory=True, with_stack=True) as prof:
     #     with record_function("model_inference"):
@@ -543,7 +544,7 @@ mediapy.write_video(args.output_path / "rotating.mp4", eimages)
 model.save2ply(args.output_path / "ckpt.ply")
 torch.save(model.state_dict(), args.output_path / "ckpt.pth")
 
-results = test_util.evaluate_and_save(model, test_cameras, args.output_path, args.tile_size, min_t)
+results = test_util.evaluate_and_save(model, train_cameras, test_cameras, args.output_path, args.tile_size, min_t)
 
 with (args.output_path / "results.json").open("w") as f:
     all_data = dict(

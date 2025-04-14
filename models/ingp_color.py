@@ -154,7 +154,7 @@ class Model(nn.Module):
             [math.pi, 0],
         ], device=self.device)
         self.backbone = torch.compile(iNGPDW(**kwargs)).to(self.device)
-        self.chunk_size = 508576
+        self.chunk_size = 408576
 
         self.vertex_lights = nn.Parameter(vertex_lights)
 
@@ -451,6 +451,8 @@ class TetOptimizer:
                  vertices_lr: float=4e-4,
                  final_vertices_lr: float=4e-7,
                  vertices_lr_delay_multi: float=0.01,
+                 start_clip_multi: float=1e-4,
+                 end_clip_multi: float=1e-4,
                  weight_decay=1e-10,
                  lambda_color=1e-10,
                  split_std: float = 0.5,
@@ -496,9 +498,18 @@ class TetOptimizer:
                                                 lr_delay_mult=vertices_lr_delay_multi,
                                                 max_steps=max_steps,
                                                 lr_delay_steps=vert_lr_delay)
+        self.iteration = 0
+        self.clip_multi_scheduler_args = get_expon_lr_func(lr_init=start_clip_multi,
+                                                lr_final=end_clip_multi,
+                                                max_steps=max_steps)
+
+    @property
+    def clip_multi(self):
+        return self.clip_multi_scheduler_args(self.iteration)
 
     def update_learning_rate(self, iteration):
         ''' Learning rate scheduling per step '''
+        self.iteration = iteration
         for param_group in self.net_optim.param_groups:
             if param_group["name"] == "network":
                 lr = self.net_scheduler_args(iteration)
