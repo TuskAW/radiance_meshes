@@ -20,7 +20,7 @@ import numpy as np
 from utils.args import Args
 import tinyplypy
 from scipy.spatial import ConvexHull
-
+from scipy.spatial import  Delaunay
 
 torch.set_float32_matmul_precision('high')
 
@@ -423,13 +423,18 @@ class Model(nn.Module):
         self.max_lights = min(self.num_lights, self.max_lights+1)
 
     @torch.no_grad()
-    def update_triangulation(self, alpha_threshold=0.05/255):
+    def update_triangulation(self, high_precision=False, alpha_threshold=0.05/255):
         torch.cuda.empty_cache()
         verts = self.vertices
-        v = Del(verts.shape[0])
-        indices_np, prev = v.compute(verts.detach().cpu().double())
-        indices_np = indices_np.numpy()
-        indices_np = indices_np[(indices_np < verts.shape[0]).all(axis=1)]
+        if high_precision:
+            simplices = Delaunay(verts.detach().cpu().numpy()).simplices
+            self.indices = torch.tensor(simplices, device=verts.device).int().cuda()
+
+        else:
+            v = Del(verts.shape[0])
+            indices_np, prev = v.compute(verts.detach().cpu().double())
+            indices_np = indices_np.numpy()
+            indices_np = indices_np[(indices_np < verts.shape[0]).all(axis=1)]
         
         self.indices = torch.as_tensor(indices_np).cuda()
         
@@ -437,9 +442,9 @@ class Model(nn.Module):
             mask = self.calc_tet_alpha() > alpha_threshold
             self.indices = self.indices[mask]
             
-            del indices_np, prev, mask
+            del prev, mask
         else:
-            del indices_np, prev
+            del prev
         torch.cuda.empty_cache()
 
     def __len__(self):

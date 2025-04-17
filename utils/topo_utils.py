@@ -193,17 +193,18 @@ def compute_vertex_sensitivity(indices: torch.Tensor, vertices: torch.Tensor,
     tetra_points = vertices[indices]  # Shape: (M, 4, 3)
     a = tetra_points[..., 1:, :] - tetra_points[..., 0:1, :]  # Shape: (3, 3)
 
-    J_d = contraction_jacobian_d_in_chunks(normalized_circumcenter).float()
+    # the absolute value of the determinant of the jacobian of the contraction
     # J_d is lower the further from the center it is.
     # sensitivity is lower the further we are from the origin
-    # Then, divide by the spectral norm, because we actually find the min eigen value for A, instead of max eigen of A^-1
-    # jacobian_matrix_sens = J_d.clip(min=1e-3)/compute_spectral_norm3(a).clip(min=1e-5)
+    J_d = contraction_jacobian_d_in_chunks(normalized_circumcenter).float()
+
+    # we actually find the min eigen value for A, instead of max eigen of A^-1
+    # the spectral norm grows as A^-1 becomes more unstable. Our inverse one shrinks
     sp_norm = compute_spectral_norm3(a)
-    # this is true if the circumcenter is not on the outside
-    # sp_norm[~border] = sp_norm.clip(max=tetra_radius)[~border]
-    # sp_norm = sp_norm.clip(max=tetra_radius)
-    # I need to clip the sp_norm 
-    jacobian_matrix_sens = J_d.clip(min=1e-5)*sp_norm.clip(min=1e-5)
+
+    # jacobian_matrix_sens = J_d.clip(min=1e-3)/compute_spectral_norm3(a).clip(min=1e-5)
+    # jacobian_matrix_sens = J_d.clip(min=1e-5)*sp_norm.clip(min=1e-5)
+    jacobian_matrix_sens = sp_norm.clip(min=1e-5) / J_d.clip(min=1e-5)
     num_vertices = vertices.shape[0]
 
     vertex_sensitivity = torch.full((num_vertices,), 0.0, device=vertices.device)
@@ -216,7 +217,8 @@ def compute_vertex_sensitivity(indices: torch.Tensor, vertices: torch.Tensor,
     vertex_sensitivity.scatter_reduce_(dim=0, index=indices[..., 2], src=jacobian_matrix_sens, reduce=reduce_type)
     vertex_sensitivity.scatter_reduce_(dim=0, index=indices[..., 3], src=jacobian_matrix_sens, reduce=reduce_type)
 
-    return jacobian_matrix_sens, vertex_sensitivity.reshape(num_vertices, -1)
+    # only use sp_norm here because the perturbations are applied in contracted space
+    return sp_norm, vertex_sensitivity.reshape(num_vertices, -1)
 
 def fibonacci_spiral_on_sphere(n_points: int, 
                                radius: float = 1.0, 

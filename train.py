@@ -89,7 +89,7 @@ args.final_lights_lr = 5e-3
 args.color_lr = 1e-2
 args.final_color_lr = 1e-2
 args.num_lights = 2
-args.sh_interval = 1000
+args.sh_interval = 2000
 
 # iNGP Settings
 args.encoding_lr = 1e-3
@@ -119,6 +119,7 @@ args.start_clip_multi = 1e-4
 args.end_clip_multi = 1e-4
 args.delaunay_start = 17000
 args.freeze_start = 25000
+args.ext_convex_hull = False
 
 # Distortion Settings
 args.lambda_dist = 1e-4
@@ -141,7 +142,7 @@ args.budget = 2_000_000
 args.lambda_noise = 5e9
 
 args.lambda_ssim = 0.2
-args.base_min_t = 0.01
+args.base_min_t = 0.05
 args.sample_cam = 24
 args.data_device = 'cpu'
 args.lambda_alpha = 0.0
@@ -250,6 +251,7 @@ torch.cuda.empty_cache()
 for iteration in progress_bar:
     delaunay_interval = 10 if iteration < args.delaunay_start else 100
     do_delaunay = iteration % delaunay_interval == 0 and iteration < args.freeze_start
+    do_freeze = iteration == args.freeze_start
     do_cloning = max(iteration - args.densify_start, 0) % args.densify_interval == 0 and args.densify_end > iteration >= args.densify_start
     do_sh_up = not args.sh_interval == 0 and iteration % args.sh_interval == 0 and iteration > 0
     do_sh_step = iteration % 16 == 0
@@ -325,7 +327,7 @@ for iteration in progress_bar:
     cc = render_pkg['normed_cc']
     st = time.time()
     alphas = compute_alpha(model.indices, model.vertices, render_pkg['density'], mask)
-    # loss += args.lambda_alpha * alphas.mean()
+    loss += args.lambda_alpha * alphas.mean()
     loss.backward()
     # tet_optim.clip_gradient(args.grad_clip)
 
@@ -333,7 +335,6 @@ for iteration in progress_bar:
         model.indices, model.vertices, cc, alphas,
         mask, render_pkg['cc_sensitivity'],
         tet_optim.vertex_lr, k=100, t=(1-0.005))
-    model.perturb_vertices(v_perturb)
 
     tet_optim.main_step()
     tet_optim.main_zero_grad()
@@ -380,8 +381,8 @@ for iteration in progress_bar:
 
     if do_cloning:
         # collect data
-        print(f"Culling {(~vert_alive).sum()} dead vertices")
-        tet_optim.remove_points(vert_alive)
+        # print(f"Culling {(~vert_alive).sum()} dead vertices")
+        # tet_optim.remove_points(vert_alive)
 
         sampled_cameras = [train_cameras[i] for i in densification_sampler.nextids()]
         tet_moments = torch.zeros((model.indices.shape[0], 4), device=device)
@@ -468,7 +469,7 @@ for iteration in progress_bar:
 
     if do_delaunay:
         st = time.time()
-        model.update_triangulation()
+        model.update_triangulation(high_precision=do_freeze)
 
 avged_psnrs = [sum(v)/len(v) for v in psnrs if len(v) == len(train_cameras)]
 video_writer.release()

@@ -190,7 +190,7 @@ def render(camera: Camera, model, bg=0, cell_values=None, tile_size=16, min_t=0.
             with torch.no_grad():
                 tet_sens, sensitivity = topo_utils.compute_vertex_sensitivity(model.indices[mask],
                                                                             vertices, normed_cc)
-                scaling = clip_multi*sensitivity.reshape(-1, 1).clip(min=1)
+                scaling = clip_multi*sensitivity.reshape(-1, 1).clip(min=1e-5)
             vertices = train_util.ClippedGradients.apply(vertices, scaling)
             extras['normed_cc'] = normed_cc
             extras['cc_sensitivity'] = tet_sens
