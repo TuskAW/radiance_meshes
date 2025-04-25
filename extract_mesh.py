@@ -27,7 +27,7 @@ if args.use_ply:
 else:
     from models.ingp_color import Model
     model = Model.load_ckpt(args.output_path, device)
-model.extract_mesh(args.output_path / "0.ply")
+model.extract_mesh(args.output_path / "meshes")
 # eventually, generate a UV map for each mesh
 # organize onto a texture map
 # then, optimize the texture for each of these maps

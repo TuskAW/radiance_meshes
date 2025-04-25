@@ -150,6 +150,7 @@ args.data_device = 'cpu'
 args.lambda_alpha = 0.0
 args.lambda_density = 0.0
 args.lambda_color = 0.0
+args.lambda_tv = 0.0
 args.density_threshold = 0.0
 
 # Bilateral grid arguments
@@ -252,6 +253,7 @@ video_writer = cv2.VideoWriter(str(args.output_path / "training.mp4"), cv2.CAP_F
 # cc_locations = []
 vert_alive = torch.ones((model.contracted_vertices.shape[0]), dtype=bool, device=device)
 
+tet_optim.build_tv()
 progress_bar = tqdm(range(args.iterations))
 torch.cuda.empty_cache()
 for iteration in progress_bar:

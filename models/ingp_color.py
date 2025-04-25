@@ -351,26 +351,29 @@ class Model(nn.Module):
             tet_var[start:end] = torch.linalg.norm(clipped_gradients, dim=-1).mean(dim=-1)
         return tet_var
 
-    @torch.no_grad
-    def extract_mesh(self, path, alpha_threshold=0.5):
+    def threshold_tet_density(self, density_threshold):
+        mask = []
         verts = self.vertices
-        v = Del(verts.shape[0])
-        indices_np, tri_output = v.compute(verts.detach().cpu())
-        indices_np = indices_np.numpy()
-        inf_mask = (indices_np < verts.shape[0]).all(axis=1)
-        indices_np = indices_np[inf_mask]
-        
-        self.indices = torch.as_tensor(indices_np).cuda()
-        mask = self.calc_tet_alpha() > alpha_threshold
-        
-        full_mask = torch.zeros((inf_mask.shape[0]), dtype=bool)
-        full_mask[inf_mask] = mask.cpu()
-        meshes = tri_output.extract_meshes(verts.detach().cpu(), full_mask)['meshes']
-        sizes = [len(mesh['x']) for mesh in meshes]
+        for start in range(0, self.indices.shape[0], self.chunk_size):
+            end = min(start + self.chunk_size, self.indices.shape[0])
+            
+            _, _, output = self.compute_batch_features(verts, self.indices, start, end)
 
-        
-        largest = meshes[np.argmax(sizes)]
-        tinyplypy.write_ply(str(path), largest, is_binary=False)
+            density = safe_exp(output[:, 0]+self.density_offset)
+            mask.append(density > density_threshold)
+        return torch.cat(mask)
+
+    @torch.no_grad
+    def extract_mesh(self, path, density_threshold=0.5):
+        path.mkdir(exist_ok=True, parents=True)
+        mask = self.threshold_tet_density(density_threshold)
+        meshes = tri_output.extract_meshes(verts.detach().cpu(), self.indices[mask])
+        for i, mesh in enumerate(meshes):
+            F = mesh['face']['vertex_indices']
+            if F > 1000:
+                mpath = path / f"{i}.ply"
+                print(f"Saving #F:{F} to {mpath}")
+                tinyplypy.write_ply(str(mpath), mesh, is_binary=False)
 
     @torch.no_grad
     def save2ply(self, path):
@@ -456,7 +459,7 @@ class Model(nn.Module):
         self.indices = torch.as_tensor(indices_np).cuda()
         
         if density_threshold > 0:
-            mask = self.calc_tet_density() > density_threshold
+            mask = self.threshold_tet_density(density_threshold)
             self.indices = self.indices[mask]
             
             del prev, mask
@@ -490,9 +493,11 @@ class TetOptimizer:
                  max_steps: int = 10000,
                  vert_lr_delay: int = 500,
                  sh_interval: int = 1000,
+                 lambda_tv: float = 0.0,
                  **kwargs):
         self.weight_decay = weight_decay
         self.lambda_color = lambda_color
+        self.lambda_tv = lambda_tv
         self.optim = optim.CustomAdam([
             {"params": model.backbone.encoding.parameters(), "lr": encoding_lr, "name": "encoding"},
         ], ignore_param_list=["encoding", "network"], betas=[0.9, 0.99], eps=1e-15)
@@ -640,16 +645,25 @@ class TetOptimizer:
         mean_sh = (self.model.vertex_lights).abs().mean()
         sh_decay = self.lambda_color * mean_sh
 
-        density = torch.zeros((self.model.indices.shape[0]), device='cuda')
-        density[render_pkg['mask']] = render_pkg['density']
+        # m = render_pkg['mask']
+        # ic(m.shape, self.model.indices.shape)
+        # density = torch.zeros((m.shape[0]), device='cuda')
+        if self.lambda_tv > 0:
+            density = render_pkg['density']
 
-        diff  = density[self.pairs[:,0]] - density[self.pairs[:,1]]
-        tv_loss  = (self.areas * diff.abs())
-        tv_loss  = tv_loss.sum() / self.areas.sum()
+            diff  = density[self.pairs[:,0]] - density[self.pairs[:,1]]
+            tv_loss  = (self.face_area * diff.abs())
+            tv_loss  = tv_loss.sum() / self.face_area.sum()
+        else:
+            tv_loss = 0
 
         return sh_decay + weight_decay + self.lambda_tv * tv_loss
 
     def update_triangulation(self, **kwargs):
         self.model.update_triangulation(**kwargs)
-        self.owners, self.face_area = topo_utils.build_tv_struct(
-            self.model.vertices.detach(), self.model.indices, device='cuda')
+        self.build_tv()
+
+    def build_tv(self):
+        if self.lambda_tv > 0:
+            self.pairs, self.face_area = topo_utils.build_tv_struct(
+                self.model.vertices.detach(), self.model.indices, device='cuda')

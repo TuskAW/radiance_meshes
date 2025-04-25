@@ -339,6 +339,6 @@ def build_tv_struct(verts, tets, device=None):
     fverts = verts[face_lists[face_rows]]                        # (M,3,3)
     v01 = fverts[:,1] - fverts[:,0]
     v02 = fverts[:,2] - fverts[:,0]
-    areas = 0.5 * torch.linalg.norm(torch.cross(v01, v02), dim=1)
+    areas = 0.5 * torch.linalg.norm(torch.cross(v01, v02, dim=1), dim=1)
 
-    return owners, areas
+    return owners, areas[::2]
