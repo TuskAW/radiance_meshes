@@ -152,13 +152,14 @@ args.lambda_density = 0.0
 args.lambda_color = 0.0
 args.lambda_tv = 0.0
 args.density_threshold = 0.0
+args.voxel_size = 0.00
 
 # Bilateral grid arguments
 # Bilateral grid parameters
 args.use_bilateral_grid = False
 args.bilateral_grid_shape = [16, 16, 8]
 args.bilateral_grid_lr = 0.003  # Match gsplat's default
-args.lambda_tv = 10.0
+args.lambda_tv = 0.0
 
 args = Args.from_namespace(args.get_parser().parse_args())
 

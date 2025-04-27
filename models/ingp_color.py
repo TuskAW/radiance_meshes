@@ -21,6 +21,9 @@ from utils.args import Args
 import tinyplypy
 from scipy.spatial import ConvexHull
 from scipy.spatial import  Delaunay
+import open3d as o3d
+from data.types import BasicPointCloud
+from simple_knn._C import distCUDA2
 
 torch.set_float32_matmul_precision('high')
 
@@ -195,20 +198,41 @@ class Model(nn.Module):
         return normed_cc, features
 
     @staticmethod
-    def init_from_pcd(point_cloud, cameras, device, num_lights, ext_convex_hull, **kwargs):
+    def init_from_pcd(point_cloud, cameras, device, num_lights, ext_convex_hull, voxel_size=0.05, **kwargs):
         torch.manual_seed(2)
+
+        vertices = torch.as_tensor(point_cloud.points).float()
+
+        dist = torch.clamp_min(distCUDA2(vertices.cuda()), 0.0000001).sqrt().cpu()
+
+        repeats = 3
+        vertices = vertices.reshape(-1, 1, 3).expand(-1, repeats, 3)
+        vertices = vertices + torch.randn(*vertices.shape) * dist.reshape(-1, 1, 1)
+        vertices = vertices.reshape(-1, 3)
+
+        # Convert BasicPointCloud to Open3D PointCloud
+        o3d_pcd = o3d.geometry.PointCloud()
+        o3d_pcd.points = o3d.utility.Vector3dVector(vertices.numpy())
+
+        # Perform voxel downsampling
+        if voxel_size > 0:
+            o3d_pcd = o3d_pcd.voxel_down_sample(voxel_size=voxel_size)
+
         N = point_cloud.points.shape[0]
-        # N = 1000
-        vertices = torch.as_tensor(point_cloud.points)[:N]
+        vertices = torch.as_tensor(np.asarray(o3d_pcd.points)).float()
+        vertices = vertices + torch.randn(*vertices.shape) * 1e-2
 
         ccenters = torch.stack([c.camera_center.reshape(3) for c in cameras], dim=0).to(device)
         center = ccenters.mean(dim=0)
         scaling = torch.linalg.norm(ccenters - center.reshape(1, 3), dim=1, ord=torch.inf).max()
 
-        repeats = 3
-        vertices = vertices.reshape(-1, 1, 3).expand(-1, repeats, 3)
-        vertices = vertices + torch.randn(*vertices.shape) * 1e-1
-        vertices = vertices.reshape(-1, 3)
+        # vertices = vertices + torch.randn(*vertices.shape) * 1e-3
+        # v = Del(vertices.shape[0])
+        # indices_np, prev = v.compute(vertices.detach().cpu().double())
+        # indices_np = indices_np.numpy()
+        # indices_np = indices_np[(indices_np < vertices.shape[0]).all(axis=1)]
+        # vertices = vertices[indices_np].mean(dim=1)
+        # vertices = vertices + torch.randn(*vertices.shape) * 1e-3
 
         # add sphere
         pcd_scaling = torch.linalg.norm(vertices - center.cpu().reshape(1, 3), dim=1, ord=2).max()
@@ -285,6 +309,12 @@ class Model(nn.Module):
         vertex_alpha.scatter_reduce_(dim=0, index=indices[..., 3], src=tet_alphas, reduce=reduce_type)
         return vertex_alpha
 
+    def calc_tet_area(self):
+        verts = self.vertices
+        v0, v1, v2, v3 = verts[self.indices].unbind(dim=1)
+        mat = torch.stack([v1-v0, v2-v0, v3-v0], dim=-1)
+        return torch.det(mat).abs() / 6.0
+
     def calc_vert_density(self):
         verts = self.vertices
         vertex_density = torch.zeros((verts.shape[0],), device=self.device)
@@ -351,8 +381,8 @@ class Model(nn.Module):
             tet_var[start:end] = torch.linalg.norm(clipped_gradients, dim=-1).mean(dim=-1)
         return tet_var
 
-    def threshold_tet_density(self, density_threshold):
-        mask = []
+    def calc_tet_density(self):
+        densities = []
         verts = self.vertices
         for start in range(0, self.indices.shape[0], self.chunk_size):
             end = min(start + self.chunk_size, self.indices.shape[0])
@@ -360,13 +390,13 @@ class Model(nn.Module):
             _, _, output = self.compute_batch_features(verts, self.indices, start, end)
 
             density = safe_exp(output[:, 0]+self.density_offset)
-            mask.append(density > density_threshold)
-        return torch.cat(mask)
+            densities.append(density)
+        return torch.cat(densities)
 
     @torch.no_grad
     def extract_mesh(self, path, density_threshold=0.5):
         path.mkdir(exist_ok=True, parents=True)
-        mask = self.threshold_tet_density(density_threshold)
+        mask = self.calc_tet_density() > density_threshold
         meshes = tri_output.extract_meshes(verts.detach().cpu(), self.indices[mask])
         for i, mesh in enumerate(meshes):
             F = mesh['face']['vertex_indices']
@@ -459,7 +489,7 @@ class Model(nn.Module):
         self.indices = torch.as_tensor(indices_np).cuda()
         
         if density_threshold > 0:
-            mask = self.threshold_tet_density(density_threshold)
+            mask = self.calc_tet_density() > density_threshold
             self.indices = self.indices[mask]
             
             del prev, mask
@@ -494,10 +524,12 @@ class TetOptimizer:
                  vert_lr_delay: int = 500,
                  sh_interval: int = 1000,
                  lambda_tv: float = 0.0,
+                 lambda_density: float = 0.0,
                  **kwargs):
         self.weight_decay = weight_decay
         self.lambda_color = lambda_color
         self.lambda_tv = lambda_tv
+        self.lambda_density = lambda_density
         self.optim = optim.CustomAdam([
             {"params": model.backbone.encoding.parameters(), "lr": encoding_lr, "name": "encoding"},
         ], ignore_param_list=["encoding", "network"], betas=[0.9, 0.99], eps=1e-15)
@@ -648,16 +680,21 @@ class TetOptimizer:
         # m = render_pkg['mask']
         # ic(m.shape, self.model.indices.shape)
         # density = torch.zeros((m.shape[0]), device='cuda')
-        if self.lambda_tv > 0:
-            density = render_pkg['density']
 
-            diff  = density[self.pairs[:,0]] - density[self.pairs[:,1]]
-            tv_loss  = (self.face_area * diff.abs())
-            tv_loss  = tv_loss.sum() / self.face_area.sum()
+        if self.lambda_density > 0 or self.lambda_tv > 0:
+            density = self.model.calc_tet_density()
+            density_loss = (self.model.calc_tet_area().detach() * density).sum()
+            if self.lambda_tv > 0:
+                diff  = density[self.pairs[:,0]] - density[self.pairs[:,1]]
+                tv_loss  = (self.face_area * diff.abs())
+                tv_loss  = tv_loss.sum() / self.face_area.sum()
+            else:
+                tv_loss = 0
         else:
+            density_loss = 0
             tv_loss = 0
 
-        return sh_decay + weight_decay + self.lambda_tv * tv_loss
+        return sh_decay + weight_decay + self.lambda_tv * tv_loss + self.lambda_density * density_loss
 
     def update_triangulation(self, **kwargs):
         self.model.update_triangulation(**kwargs)
