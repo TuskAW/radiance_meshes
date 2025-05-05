@@ -483,70 +483,63 @@ void kern_calc_tet_err(TensorView<int32_t> sorted_gauss_idx,
                   uint32_t W,
                   float pixel_err)
 {
-    float2 center_pix_coord = {pix_coord.x+0.5, pix_coord.y+0.5};
-    // Load the final pixel state.
-    bool is_inside = (pix_coord.x < W && pix_coord.y < H);
-    uint32_t block_size = tile_height * tile_width;
-    const int rounds = ((tile_idx_end - tile_idx_start + block_size - 1) / block_size);
-
     uint seed = hash_wang(pix_coord.x);
     seed = hash_wang(seed ^ pix_coord.y);
     seed = hash_wang(seed ^ tile_idx_end);
     seed = hash_wang(seed ^ tile_idx_start);
     RNG rng = {seed};
 
-    int splats_left_to_process = tile_idx_end - tile_idx_start;
-    int64_t current_splat_offset = tile_idx_end - tile_idx_start;
+    float2 center_pix_coord = {pix_coord.x+0.5, pix_coord.y+0.5};
+    float4 curr_pixel_state = float4(0.f, 0.f, 0.f, 1.f);
+    DistortionState5 curr_distortion_state = {0.f, 0.f, 0.f, 0.f, 0.f};
+    AlphaOut ao = {
+        curr_pixel_state, curr_distortion_state
+    };
+    uint32_t block_size = tile_height * tile_width;
+    bool is_inside = (pix_coord.x < W && pix_coord.y < H);
+    bool thread_active = is_inside;
 
-    float4 current_pixel_state;
-    int32_t n_contrib_fwd;
-    if (is_inside) {
-        current_pixel_state = float4(final_pixel_state[uint3(uint32_t(pix_coord.y), uint32_t(pix_coord.x), 0)],
-                                     final_pixel_state[uint3(uint32_t(pix_coord.y), uint32_t(pix_coord.x), 1)],
-                                     final_pixel_state[uint3(uint32_t(pix_coord.y), uint32_t(pix_coord.x), 2)],
-                                     final_pixel_state[uint3(uint32_t(pix_coord.y), uint32_t(pix_coord.x), 3)]);
-        n_contrib_fwd = n_contributors[uint3(uint32_t(pix_coord.y), uint32_t(pix_coord.x), 0)];
-    }
+    const int shared_memory_rounds = ((tile_idx_end - tile_idx_start) + block_size - 1) / block_size;
+    uint32_t thread_rank = cudaThreadIdx().y * cudaBlockDim().x + cudaThreadIdx().x;
+    //bool print = thread_rank == 0;
+    bool print = false;
+
 
     Ray ray = get_ray(cam, center_pix_coord, min_t);
+    // if (print) {
+    //     printf("ray_o: %f, %f, %f, ray_d: %f, %f, %f\n", ray.o.x, ray.o.y, ray.o.z, ray.d.x, ray.d.y, ray.d.z);
+    // }
 
-    DifferentialPair<float2> dp_center_pix_coord = diffPair(center_pix_coord);
-
-    uint32_t thread_rank = cudaThreadIdx().y * cudaBlockDim().x + cudaThreadIdx().x;
-    bool thread_active = true;
-    for (int i = 0; i < rounds; i++)
+    int32_t local_n_contrib = 0;
+    // int32_t low = 0;
+    int countdown = 1;
+    int splats_left_to_process = tile_idx_end - tile_idx_start;
+    for (int i = 0; i < shared_memory_rounds; i++)
     {
         // Collectively fetch per-Gaussian data from global to shared
         AllMemoryBarrierWithGroupSync();
-        int progress = i * block_size + thread_rank;
-        if (tile_idx_start + progress < tile_idx_end)
+        int splat_pointer_offset = i * block_size + thread_rank;
+        if (tile_idx_start + splat_pointer_offset < tile_idx_end)
         {
-            uint32_t coll_id = uint32_t(sorted_gauss_idx[tile_idx_end - progress - 1]);
+            uint32_t coll_id = uint32_t(sorted_gauss_idx[tile_idx_start + splat_pointer_offset]);
             collected_idx[thread_rank] = coll_id;
             collected_splats[thread_rank] = load_tet_alphablend_interp(coll_id, vertices, indices, tet_density);
         }
         AllMemoryBarrierWithGroupSync();
-        if (is_inside) {
+        if (thread_active) {
             for (int j = 0; j < min(block_size, splats_left_to_process); j++)
             {
-                current_splat_offset--;
-                if (current_splat_offset >= n_contrib_fwd || current_splat_offset < 0)
-                    continue;
-                uint32_t g_idx = collected_idx[j];
+                local_n_contrib++;
                 SplatTetrahedra_interp g = collected_splats[j];
-
+                uint32_t g_idx = collected_idx[j];
                 CtrlPt tetra_ctrl;
                 if (evaluate_tetra_interp(g, ray.o, ray.d, min_t, tetra_ctrl)) {
-                    // CtrlPt tetra_ctrl = evaluate_tetra_2D(g, cam, min_t, center_pix_coord);
                     if (tetra_ctrl.rgba.a < 1/255.f) continue;
-
-                    // Undo pixel state
-                    current_pixel_state = undo_pixel_state(current_pixel_state, tetra_ctrl.rgba);
 
                     float midpt = 0.5 * (tetra_ctrl.dist.x + tetra_ctrl.dist.y);
                     float grad_scale = min(1, midpt*midpt);// / scene_scaling / scene_scaling);
                     // Why mul by T? Because we are moving backwards, so there is no occlusion
-                    float weight = grad_scale * current_pixel_state.a * tetra_ctrl.rgba.a;
+                    float weight = grad_scale * tetra_ctrl.rgba.a;
                     float p = rng_f32(rng);
                     if (p < weight && thread_active) {
                     //float err = pow(weight, 1.f/8.f) * pixel_err * grad_scale;
