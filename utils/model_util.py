@@ -88,146 +88,6 @@ def activate_output(camera_center, density, rgb, grd, sh, indices, circumcenters
     return features
 
 class iNGPDW(nn.Module):
-    """
-    Hash‑grid backbone with four independent heads
-      • density     (1)
-      • base colour (3)
-      • colour‑gradient (3×3 = 9)
-      • SH coeffs   (sh_dim)
-    Multisamples `k_samples` Gaussian jitters inside each circumsphere and
-    averages the encoded features (Zip‑NeRF style).
-    """
-    def __init__(self,
-                 sh_dim:        int   = 0,
-                 k_samples:     int   = 4,
-                 trunc_sigma:   float = 0.30,   # radius·sigma of Gaussian
-                 scale_multi:   float = 0.5,
-                 log2_hashmap_size: int = 16,
-                 base_resolution:    int = 16,
-                 per_level_scale:    int = 2,
-                 L:              int   = 10,
-                 hashmap_dim:    int   = 4,
-                 hidden_dim:     int   = 64,
-                 density_offset: float = -4,
-                 **kwargs):
-        super().__init__()
-
-        # ---------------- parameters used in forward -------------------------
-        self.k_samples      = k_samples
-        self.trunc_sigma    = trunc_sigma
-        self.scale_multi    = scale_multi
-        self.L              = L
-        self.dim            = hashmap_dim
-        self.per_level_scale= per_level_scale
-        self.base_resolution= base_resolution
-        self.density_offset = density_offset
-
-        # ---------------- hash‑grid encoder ----------------------------------
-        self.encoding = HashEmbedderOptimized(
-            [torch.zeros((3)), torch.ones((3))],
-            L, n_features_per_level=hashmap_dim,
-            log2_hashmap_size=log2_hashmap_size,
-            base_resolution=base_resolution,
-            finest_resolution=base_resolution * per_level_scale ** L
-        )
-
-        # -------------- shared MLP template ----------------------------------
-        def mk_head(out_channels: int) -> nn.Sequential:
-            head = nn.Sequential(
-                nn.Linear(self.encoding.n_output_dims, hidden_dim),
-                nn.SELU(inplace=True),
-                nn.Linear(hidden_dim, hidden_dim),
-                nn.SELU(inplace=True),
-                nn.Linear(hidden_dim, out_channels)
-            )
-            head.apply(lambda m: init_linear(m, nn.init.calculate_gain('relu')))
-            return head
-
-        # ---------------- four heads -----------------------------------------
-        self.density_net   = mk_head(1)
-        self.color_net     = mk_head(3)
-        self.gradient_net  = mk_head(9)
-        self.sh_net        = mk_head(sh_dim)
-        self.backup_net        = mk_head(1+3+9+sh_dim)
-
-        # optional: zero‑init non‑density/colour outputs
-        with torch.no_grad():
-            for net in (self.gradient_net, self.sh_net):
-                net[-1].weight.zero_()
-                net[-1].bias.zero_()
-            self.backup_net[-1].weight[4:].zero_()
-            self.backup_net[-1].bias[4:].zero_()
-
-    # ╭────────────────── helper: encode  ────────────────────────────────────╮
-    def _encode(self, x: torch.Tensor, cr: torch.Tensor) -> torch.Tensor:
-        h = self.encoding(x).float()                         # (B, dim, L)
-        cr = cr.float()
-        h = h.reshape(-1, self.dim, self.L)
-
-        n = torch.arange(self.L, device=x.device).view(1,1,-1)  # (1,1,L)
-        erf_x   = safe_div(torch.tensor(1.0, device=x.device),
-                           safe_sqrt(self.per_level_scale * 4*n * cr.view(-1,1,1)))
-        h       = (h * torch.erf(erf_x)).reshape(-1, self.L * self.dim)
-        return h                                             # (B, F)
-    # ╰────────────────────────────────────────────────────────────────────────╯
-
-    # ╭────────────────── helper: decode  ────────────────────────────────────╮
-    def _decode(self, h: torch.Tensor) -> torch.Tensor:
-        output = self.backup_net(h)
-        sigma = output[:, :1]
-        temp = output[:, 1:12+1]
-        rgb = temp[:, :3]
-        field_samples = temp[:, 3:12]
-        sh = output[:, 13:]
-
-        # sigma   = self.density_net(h)
-        # rgb = self.color_net(h)
-        # field_samples = self.gradient_net(h)
-        # sh  = self.sh_net(h)
-
-        rgb = rgb.reshape(-1, 3, 1) + 0.5
-        density = safe_exp(sigma+self.density_offset)
-        grd = rgb * torch.tanh(field_samples.reshape(-1, 3, 3))  # shape (T, 3, 3)
-
-        return density, rgb.reshape(-1, 3), grd, sh
-    # ╰────────────────────────────────────────────────────────────────────────╯
-
-    # ╭──────────────────────────── forward  ─────────────────────────────────╮
-    def forward(self, x: torch.Tensor, cr: torch.Tensor) -> torch.Tensor:
-        """
-        Args
-        ----
-        x  : contracted coords in [0,1]^3   (B,3)   ➊
-        cr : contracted radius/std          (B,)    ➋
-
-        ➊ Your caller already uses  x = (cv/2 + 1)/2
-        ➋ cr is the same radius that went into contract_mean_std
-        """
-
-        ic(self.k_samples)
-        if self.k_samples > 1:
-
-            # ------- draw Gaussian jitters inside the sphere -----------------
-            eps = torch.randn((x.shape[0], self.k_samples, 3),
-                              device=x.device)
-            eps = eps * (self.trunc_sigma * cr/4).view(-1,1,1)   # scale
-            samples_xf = (x.unsqueeze(1) + eps).reshape(-1, 3)
-
-            samples_xf.clamp_(0.0, 1.0)
-            samples_cr = cr.repeat_interleave(self.k_samples)
-
-            # ------- encode every jitter and mean in feature space -----------
-            h = self._encode(samples_xf, samples_cr)            # (B*k,F)
-            ic(h.shape)
-            h = h.view(cv.shape[0], self.k_samples, -1).mean(dim=1)
-        else:
-            h = self._encode(x, cr)
-
-        return self._decode(h)
-    # ╰────────────────────────────────────────────────────────────────────────╯
-
-
-class iNGPDW2(nn.Module):
     def __init__(self, 
                  sh_dim=0,
                  scale_multi=0.5,
@@ -279,7 +139,7 @@ class iNGPDW2(nn.Module):
         with torch.no_grad():
             last.weight[4:, :].zero_()
             last.bias[4:].zero_()
-        for network in [self.gradient_net, self.sh_net]:
+        for network in [self.gradient_net, self.sh_net, self.color_net, self.density_net]:
             last = network[-1]
             with torch.no_grad():
                 last.weight.zero_()
@@ -291,7 +151,8 @@ class iNGPDW2(nn.Module):
         output = output.reshape(-1, self.dim, self.L)
         cr = cr.float() * self.scale_multi
         n = torch.arange(self.L, device=x.device).reshape(1, 1, -1)
-        erf_x = safe_div(torch.tensor(1.0, device=x.device), safe_sqrt(self.per_level_scale * 4*n*cr.reshape(-1, 1, 1)))
+        erf_x = safe_div(torch.tensor(1.0, device=x.device),
+                         safe_sqrt(self.per_level_scale * 4*n*cr.reshape(-1, 1, 1)))
         scaling = torch.erf(erf_x)
         output = output * scaling
         # sphere_area = 4/3*math.pi*cr**3
@@ -330,7 +191,7 @@ class iNGPDW2(nn.Module):
         field_samples = self.gradient_net(h)
         sh  = self.sh_net(h)
 
-        rgb = rgb.reshape(-1, 3, 1) + 0.5
+        rgb = rgb.reshape(-1, 1, 3) + 0.5
         density = safe_exp(sigma+self.density_offset)
         grd = rgb * torch.tanh(field_samples.reshape(-1, 3, 3))  # shape (T, 3, 3)
         return density, rgb.reshape(-1, 3), grd, sh

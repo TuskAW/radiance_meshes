@@ -53,7 +53,7 @@ class Model(nn.Module):
             [math.pi, 0],
         ], device=self.device)
         sh_dim = ((1+max_sh_deg)**2-1)*3
-        self.backbone = torch.compile(iNGPDW2(sh_dim, **kwargs)).to(self.device)
+        self.backbone = torch.compile(iNGPDW(sh_dim, **kwargs)).to(self.device)
         self.chunk_size = 408576
 
 
@@ -278,12 +278,12 @@ class Model(nn.Module):
             end = min(start + self.chunk_size, indices.shape[0])
 
             circumcenters, _, density, rgb, grd, sh = self.compute_batch_features(vertices, indices, start, end)
-            radius = torch.linalg.norm(circumcenters - vertices[indices[start:end, 0]], dim=-1)
-            clipped_gradients = (rgb+grd).clip(min=0, max=1) - base
-            # tet_var[start:end] = torch.linalg.norm(
-            #     torch.linalg.norm(clipped_gradients, dim=-1), dim=-1, ord=torch.inf)
-            # tet_var[start:end] = torch.linalg.norm(clipped_gradients, dim=-1).min(dim=-1).values
-            tet_var[start:end] = torch.linalg.norm(clipped_gradients, dim=-1).mean(dim=-1)
+            vcolors, _ = compute_vertex_colors_from_field(
+                vertices[indices[start:end]].detach(), rgb.float(), grd.float(),
+                circumcenters.float().detach())
+            vcolors = torch.nn.functional.softplus(vcolors, beta=10)
+            tet_var[start:end] = vcolors.std(dim=1).mean(dim=1)
+            # tet_var[start:end] = torch.linalg.norm(clipped_gradients, dim=-1).mean(dim=-1)
         return tet_var
 
     def calc_tet_density(self):

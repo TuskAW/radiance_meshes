@@ -155,6 +155,12 @@ def render_err(gt_image, camera: Camera, model, tile_size=16, scene_scaling=1, m
         gridSize=(render_grid.grid_width, 
                     render_grid.grid_height, 1)
     )
+
+    # weight = tet_err[:, 3:4]
+    # weight_clip = weight.clip(max=pixel_err.max())
+    # ratio = weight_clip / weight.clip(min=1e-5)
+    # tet_err = tet_err * ratio
+
     torch.cuda.synchronize()
     return tet_err, dict(
         tet_area = tet_area,
