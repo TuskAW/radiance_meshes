@@ -1,0 +1,14 @@
+output_folder,gpu_id,error,color_lr,density_lr,gradient_lr,sh_lr
+output/cl7.50E-04_dl7.50E-04_gl5.00E-05_sl5.00E-05,3,Process failed and no JSON output file found,7.50E-04,7.50E-04,5.00E-05,5.00E-05
+output/cl1.00E-04_dl1.00E-04_gl5.00E-05_sl5.00E-05,0,Process failed and no JSON output file found,1.00E-04,1.00E-04,5.00E-05,5.00E-05
+output/cl5.00E-04_dl5.00E-04_gl5.00E-05_sl5.00E-05,2,Process failed and no JSON output file found,5.00E-04,5.00E-04,5.00E-05,5.00E-05
+output/cl1.00E-03_dl1.00E-03_gl5.00E-05_sl2.50E-05,2,Process failed and no JSON output file found,1.00E-03,1.00E-03,5.00E-05,2.50E-05
+output/cl1.00E-03_dl1.00E-03_gl5.00E-05_sl1.00E-05,1,Process failed and no JSON output file found,1.00E-03,1.00E-03,5.00E-05,1.00E-05
+output/cl1.00E-03_dl1.00E-03_gl5.00E-05_sl1.00E-04,0,Process failed and no JSON output file found,1.00E-03,1.00E-03,5.00E-05,1.00E-04
+output/cl1.00E-03_dl1.00E-03_gl5.00E-05_sl5.00E-05,3,Process failed and no JSON output file found,1.00E-03,1.00E-03,5.00E-05,5.00E-05
+output/cl1.00E-03_dl1.00E-03_gl2.50E-05_sl5.00E-05,2,Process failed and no JSON output file found,1.00E-03,1.00E-03,2.50E-05,5.00E-05
+output/cl1.00E-03_dl1.00E-03_gl1.00E-05_sl5.00E-05,1,Process failed and no JSON output file found,1.00E-03,1.00E-03,1.00E-05,5.00E-05
+output/cl1.00E-03_dl1.00E-03_gl1.00E-04_sl5.00E-05,0,Process failed and no JSON output file found,1.00E-03,1.00E-03,1.00E-04,5.00E-05
+output/cl1.00E-03_dl1.00E-03_gl5.00E-05_sl5.00E-05,3,Process failed and no JSON output file found,1.00E-03,1.00E-03,5.00E-05,5.00E-05
+output/cl2.50E-04_dl2.50E-04_gl5.00E-05_sl5.00E-05,1,Process failed and no JSON output file found,2.50E-04,2.50E-04,5.00E-05,5.00E-05
+output/cl1.00E-03_dl1.00E-03_gl5.00E-05_sl5.00E-05,0,Process failed and no JSON output file found,1.00E-03,1.00E-03,5.00E-05,5.00E-05

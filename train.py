@@ -344,7 +344,10 @@ for iteration in progress_bar:
     reg = tet_optim.regularizer(render_pkg)
     ssim_loss = (1-fused_ssim(image.unsqueeze(0), target.unsqueeze(0))).clip(min=0, max=1)
     dl_loss = render_pkg['distortion_loss']
-    loss = (1-args.lambda_ssim)*l1_loss + args.lambda_ssim*ssim_loss + reg + args.lambda_dist * dl_loss
+    loss = (1-args.lambda_ssim)*l1_loss + \
+           args.lambda_ssim*ssim_loss + \
+           reg + \
+           tet_optim.lambda_dist(iteration) * dl_loss
 
     # ----- Add total variation loss for bilateral grid if enabled -----
     tvloss = None

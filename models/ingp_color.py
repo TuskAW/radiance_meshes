@@ -443,6 +443,9 @@ class TetOptimizer:
                  gradient_lr: float = 1e-3,
                  sh_lr:       float = 1e-3,
 
+                 lambda_dist: float = 1e-5,
+                 dist_delay: int = 2000,
+
                  **kwargs):
         self.weight_decay = weight_decay
         self.lambda_color = lambda_color
@@ -475,6 +478,12 @@ class TetOptimizer:
         self.vertex_grad = None
         self.split_std = split_std
 
+        self.dist_scheduler = get_expon_lr_func(lr_init=lambda_dist,
+                                                lr_final=lambda_dist,
+                                                lr_delay_mult=1e-8,
+                                                lr_delay_steps=dist_delay,
+                                                max_steps=max_steps)
+
         base_net_scheduler = get_expon_lr_func(lr_init=network_lr,
                                                 lr_final=final_network_lr,
                                                 lr_delay_mult=1e-8,
@@ -485,13 +494,6 @@ class TetOptimizer:
             spike_duration, max_steps, base_net_scheduler,
             densify_start, densify_interval, densify_end,
             network_lr, final_network_lr)
-
-        self.sh_interval = sh_interval
-        self.sh_scheduler_args = get_expon_lr_func(lr_init=lights_lr,
-                                                lr_final=final_lights_lr,
-                                                lr_delay_mult=1e-8,
-                                                lr_delay_steps=lights_lr_delay,
-                                                max_steps=max_steps-self.sh_interval)
 
         base_encoder_scheduler = get_expon_lr_func(lr_init=encoding_lr,
                                                 lr_final=final_encoding_lr,
@@ -518,6 +520,9 @@ class TetOptimizer:
     @property
     def clip_multi(self):
         return self.clip_multi_scheduler_args(self.iteration)
+
+    def lambda_dist(self, iteration):
+        return float(self.dist_scheduler(iteration))
 
     def update_learning_rate(self, iteration):
         ''' Learning rate scheduling per step '''
