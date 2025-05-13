@@ -13,6 +13,10 @@ from icecream import ic
 import math
 from utils.contraction import contraction_jacobian
 from utils.graphics_utils import l2_normalize_th
+import matplotlib.pyplot as plt
+from delaunay_rasterization.internal.alphablend_tiled_slang import render_constant_color
+
+cmap = plt.get_cmap("jet")
 
 class ClippedGradients(torch.autograd.Function):
     @staticmethod
@@ -335,3 +339,32 @@ class SpikingLR:
         peak_ind = iteration - last_peak
         height = self.peak_height_fn(peak_ind) - self.base_function(peak_ind)
         return base_f + self.peak_fn(last_peak, height)
+
+def render_debug(render_tensor, model, camera, density_multi=1):
+
+    # Convert to RGB (NxMx3) using the colormap
+    _, features = model.get_cell_values(camera)
+    tet_grad_color = torch.zeros((features.shape[0], 4), device=features.device)
+    if render_tensor.shape[1] == 1:
+        tensor_min, tensor_max = render_tensor.min(), torch.quantile(render_tensor, 0.99)
+        normalized_tensor = ((render_tensor - tensor_min) / (tensor_max - tensor_min)).clip(0, 1)
+        normalized_tensor = torch.as_tensor(
+            cmap(normalized_tensor.reshape(-1).cpu().numpy())).float().cuda()
+    else:
+        normalized_tensor = render_tensor
+    tet_grad_color[:, :normalized_tensor.shape[1]] = normalized_tensor
+    if render_tensor.shape[1] < 4:
+        tet_grad_color[:, 3] = features[:, 0] * density_multi# * render_tensor.reshape(-1)
+    render_pkg = render_constant_color(model.indices, model.vertices, None, camera, cell_values=tet_grad_color)
+
+    image = render_pkg['render']
+    image = image.permute(1, 2, 0)
+    image = (image.detach().cpu().numpy() * 255).clip(min=0, max=255).astype(np.uint8)
+
+    del render_pkg, render_tensor
+    return image
+
+def select_n(tet_err_weight, N):
+    rgbs_threshold = torch.sort(tet_err_weight).values[-min(int(N), tet_err_weight.shape[0])]
+    clone_mask = (tet_err_weight > rgbs_threshold)
+    return clone_mask

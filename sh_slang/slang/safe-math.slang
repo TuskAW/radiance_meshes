@@ -81,8 +81,6 @@ void bw_safe_div(inout DifferentialPair<float> a, inout DifferentialPair<float> 
   }
 }
 
-//[TorchEntryPoint]
-//[Differentiable]
 [BackwardDerivative(bw_safe_div)]
 float safe_div(in float a, in float b) {
   if (abs(b) < TINY_VAL) {

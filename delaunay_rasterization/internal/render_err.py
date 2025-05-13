@@ -8,7 +8,9 @@ from utils.train_util import fov2focal
 from data.camera import Camera
 from utils.ssim import ssim
 
-def render_err(gt_image, camera: Camera, model, tile_size=16, scene_scaling=1, min_t=0.1, lambda_ssim=0.2, **kwargs):
+def render_err(gt_image, camera: Camera, model, tile_size=16,
+               scene_scaling=1, min_t=0.1, lambda_ssim=0.2, 
+               density_t=1, **kwargs):
     device = model.device
     indices = model.indices
     vertices = model.vertices
@@ -122,9 +124,12 @@ def render_err(gt_image, camera: Camera, model, tile_size=16, scene_scaling=1, m
     assert(pixel_err.shape[0] == render_grid.image_height)
     assert(pixel_err.shape[1] == render_grid.image_width)
 
-    tet_err = torch.zeros((tet_vertices.shape[0], 4), dtype=torch.float, device=device)
+    tet_err = torch.zeros((tet_vertices.shape[0], 6), dtype=torch.float, device=device)
     tet_count = torch.zeros((tet_vertices.shape[0]), dtype=torch.int32, device=device)
 
+    debug_img = torch.zeros((render_grid.image_height, 
+                                render_grid.image_width, 4), 
+                                device=device)
     alpha_blend_tile_shader.calc_tet_err(
         sorted_gauss_idx=sorted_tetra_idx,
         tile_ranges=tile_ranges,
@@ -133,6 +138,8 @@ def render_err(gt_image, camera: Camera, model, tile_size=16, scene_scaling=1, m
         tet_density=cell_values,
         output_img=output_img,
         pixel_err=pixel_err,
+        debug_img=debug_img,
+        gt=gt_image.permute(1, 2, 0).contiguous(),
         tet_err=tet_err,
         tet_count=tet_count,
         n_contributors=n_contributors,
@@ -144,6 +151,7 @@ def render_err(gt_image, camera: Camera, model, tile_size=16, scene_scaling=1, m
         K=K,
         cam_pos=cam_pos,
         scene_scaling=scene_scaling,
+        density_t=density_t,
         min_t=min_t,
         fovy=fovy,
         fovx=fovx,
@@ -168,5 +176,7 @@ def render_err(gt_image, camera: Camera, model, tile_size=16, scene_scaling=1, m
         pixel_err = pixel_err,
         ssim_err = ssim_err,
         l1_err = l1_err,
-        render_img = render_img
+        render_img = render_img,
+        cell_values = cell_values,
+        debug_img = debug_img,
     )
