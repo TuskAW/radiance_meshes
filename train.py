@@ -472,7 +472,7 @@ for iteration in progress_bar:
                 # -----------------------------------------------------------------------
                 # Grow
                 # -----------------------------------------------------------------------
-                grow_mask = (tc < 2000) & (tc > 20)
+                grow_mask = (tc < 2000) & (tc > 4)
                 total_grow_moments[grow_mask] += image_votes[grow_mask, 3:6]
                 tet_moments[grow_mask, :3] += image_votes[grow_mask, 13:16]
                 tet_moments[grow_mask, 3] += image_votes[grow_mask, 3]
