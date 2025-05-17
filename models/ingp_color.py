@@ -40,14 +40,12 @@ class Model(nn.Module):
                  density_offset=-1,
                  current_sh_deg=2,
                  max_sh_deg=2,
-                 light_offset=-3,
                  **kwargs):
         super().__init__()
         self.device = vertices.device
         self.density_offset = density_offset
         self.max_sh_deg = max_sh_deg
         self.current_sh_deg = current_sh_deg
-        self.light_offset = light_offset
         self.dir_offset = torch.tensor([
             [0, 0],
             [math.pi, 0],
@@ -423,10 +421,7 @@ class TetOptimizer:
                  weight_decay=1e-10,
                  lambda_color=1e-10,
                  split_std: float = 0.5,
-                 lights_lr: float=1e-4,
-                 final_lights_lr: float=1e-4,
                  lr_delay: int = 500,
-                 lights_lr_delay: int = 500,
                  max_steps: int = 10000,
                  vert_lr_delay: int = 500,
                  sh_interval: int = 1000,

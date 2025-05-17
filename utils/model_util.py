@@ -117,40 +117,40 @@ def compute_gradient_from_vertex_colors(
 
     return base_recovered, gradients_recovered
 
-def activate_output(camera_center, density, rgb, grd, sh, indices, circumcenters, vertices, current_sh_deg, max_sh_deg, density_offset:float):
-    # subtract 0.5 to remove 0th order spherical harmonic
-    tets = vertices[indices]
-    tet_color_raw = eval_sh(
-        tets.mean(dim=1),
-        torch.zeros((rgb.shape[0], 3), device=vertices.device),
-        sh.reshape(-1, (max_sh_deg+1)**2 - 1, 3),
-        camera_center,
-        current_sh_deg) - 0.5
-    vcolors = compute_vertex_colors_from_field(
-        tets.detach(), rgb.float(), grd.float(), circumcenters.float().detach())
-    # vcolors = torch.nn.functional.softplus(tet_color_raw.reshape(-1, 1, 3).expand(-1, 4, 3), beta=10)
-    vcolors = torch.nn.functional.softplus(vcolors + tet_color_raw.reshape(-1, 1, 3), beta=10)
-    vcolors = vcolors.reshape(-1, 12)
-    features = torch.cat([density, vcolors], dim=1)
-    return features
-
 # def activate_output(camera_center, density, rgb, grd, sh, indices, circumcenters, vertices, current_sh_deg, max_sh_deg, density_offset:float):
 #     # subtract 0.5 to remove 0th order spherical harmonic
 #     tets = vertices[indices]
 #     tet_color_raw = eval_sh(
 #         tets.mean(dim=1),
-#         rgb.float(),
+#         torch.zeros((rgb.shape[0], 3), device=vertices.device),
 #         sh.reshape(-1, (max_sh_deg+1)**2 - 1, 3),
 #         camera_center,
 #         current_sh_deg) - 0.5
-#     base_color = torch.nn.functional.softplus(tet_color_raw.reshape(-1, 1, 3), beta=10)
-#     grd = grd * base_color
-#
 #     vcolors = compute_vertex_colors_from_field(
-#         tets.detach(), tet_color_raw.reshape(-1, 3), grd.float(), circumcenters.float().detach())
+#         tets.detach(), rgb.float(), grd.float(), circumcenters.float().detach())
+#     # vcolors = torch.nn.functional.softplus(tet_color_raw.reshape(-1, 1, 3).expand(-1, 4, 3), beta=10)
+#     vcolors = torch.nn.functional.softplus(vcolors + tet_color_raw.reshape(-1, 1, 3), beta=10)
 #     vcolors = vcolors.reshape(-1, 12)
 #     features = torch.cat([density, vcolors], dim=1)
 #     return features
+
+def activate_output(camera_center, density, rgb, grd, sh, indices, circumcenters, vertices, current_sh_deg, max_sh_deg, density_offset:float):
+    # subtract 0.5 to remove 0th order spherical harmonic
+    tets = vertices[indices]
+    tet_color_raw = eval_sh(
+        tets.mean(dim=1),
+        rgb.float(),
+        sh.reshape(-1, (max_sh_deg+1)**2 - 1, 3),
+        camera_center,
+        current_sh_deg) - 0.5
+    base_color = torch.nn.functional.softplus(tet_color_raw.reshape(-1, 1, 3), beta=10)
+    grd = grd * base_color
+
+    vcolors = compute_vertex_colors_from_field(
+        tets.detach(), tet_color_raw.reshape(-1, 3), grd.float(), circumcenters.float().detach())
+    vcolors = vcolors.reshape(-1, 12)
+    features = torch.cat([density, vcolors], dim=1)
+    return features
 
     # base_hat, grd_hat = compute_gradient_from_vertex_colors(
     #     vcolors, tets, circumcenters.float().detach())
@@ -211,7 +211,7 @@ class iNGPDW(nn.Module):
             last.bias[4:].zero_()
         for network, eps in zip(
             [self.gradient_net, self.sh_net, self.density_net], 
-            [1e-3, 1e-3, 0.1]):
+            [5e-1, 1e-2, 0.1]):
             last = network[-1]
             with torch.no_grad():
                 init.uniform(last.weight.data, a=-eps, b=eps)
@@ -266,4 +266,5 @@ class iNGPDW(nn.Module):
         rgb = rgb.reshape(-1, 1, 3) + 0.5
         density = safe_exp(sigma+self.density_offset)
         grd = torch.tanh(field_samples.reshape(-1, 3, 3))  # shape (T, 3, 3)
+        # grd = rgb * torch.tanh(field_samples.reshape(-1, 3, 3))  # shape (T, 3, 3)
         return density, rgb.reshape(-1, 3), grd, sh

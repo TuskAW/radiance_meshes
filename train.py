@@ -77,16 +77,11 @@ args.eval = False
 args.dataset_path = Path("/data/nerf_datasets/360/garden")
 args.output_path = Path("output/test/")
 args.iterations = 10000
-args.max_steps = 30000
+args.max_steps = 20000
 args.ckpt = ""
 args.render_train = False
 
 # Light Settings
-args.light_offset = -3
-args.lights_lr = 5e-3
-args.final_lights_lr = 5e-3
-args.lights_lr_delay = 500
-args.final_color_lr = 1e-2
 args.max_sh_deg = 3
 args.sh_interval = 2000
 args.sh_step = 1
@@ -125,7 +120,7 @@ args.contract_vertices = True
 args.start_clip_multi = 1e-3
 args.end_clip_multi = 1e-3
 args.delaunay_start = 17000
-args.freeze_start = 25000
+args.freeze_start = 17000
 args.ext_convex_hull = False
 
 # Distortion Settings
