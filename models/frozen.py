@@ -13,6 +13,7 @@ from utils.model_util import activate_output
 from utils import optim
 from utils.model_util import *
 
+
 class FrozenTetModel(nn.Module):
     """Minimal field representation with *fixed* tetrahedral geometry.
 
@@ -175,7 +176,7 @@ class FrozenTetModel(nn.Module):
             density = density.cpu().numpy().astype(np.float32)
             sh_coeff = sh.reshape(-1, sh_dim, 3)
             sh_coeffs[start:end] = sh_coeff.cpu().numpy()
-            grds[start:end] = normed_grd
+            grds[start:end] = normed_grd.reshape(-1, 3)
             densities[start:end] = density.reshape(-1)
 
         tetra_dict = {}
@@ -393,12 +394,15 @@ class FrozenTetOptimizer:
         # ------------------------------------------------------------------
         # single optimiser with four parameter groups
         # ------------------------------------------------------------------
-        self.optim = optim.CustomAdam([
+        self.optim = torch.optim.RMSprop([
             {"params": [model.density],  "lr": density_lr,  "name": "density"},
             {"params": [model.rgb],      "lr": color_lr,    "name": "color"},
             {"params": [model.gradient], "lr": gradient_lr, "name": "gradient"},
             {"params": [model.sh],       "lr": sh_lr,       "name": "sh"},
-        ], betas=[0.9, 0.99])
+        ])
+        self.sh_optim = torch.optim.SGD([
+            {"params": [model.sh],       "lr": sh_lr,       "name": "sh"},
+        ])
 
         # alias for external training scripts that expected these names
         self.net_optim   = self.optim
@@ -425,10 +429,6 @@ class FrozenTetOptimizer:
 
     def main_zero_grad(self):
         self.zero_grad()
-
-    @property
-    def sh_optim(self):
-        return None
 
     # no LR schedule by default; hook for user logic --------------------
     def update_learning_rate(self, *_, **__):

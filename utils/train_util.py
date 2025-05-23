@@ -8,7 +8,7 @@ from delaunay_rasterization.internal.alphablend_tiled_slang_interp import AlphaB
 from delaunay_rasterization.internal.render_grid import RenderGrid
 from delaunay_rasterization.internal.tile_shader_slang import vertex_and_tile_shader, point2image
 import numpy as np
-from utils import topo_utils, train_util
+from utils import topo_utils
 from icecream import ic
 import math
 from utils.contraction import contraction_jacobian
@@ -171,7 +171,7 @@ def render(camera: Camera, model, bg=0, cell_values=None, tile_size=16, min_t=0.
                 tet_sens, sensitivity = topo_utils.compute_vertex_sensitivity(model.indices[mask],
                                                                             vertices, normed_cc, model.contract_vertices)
                 scaling = clip_multi*sensitivity.reshape(-1, 1).clip(min=1e-5)
-            vertices = train_util.ClippedGradients.apply(vertices, scaling)
+            vertices = ClippedGradients.apply(vertices, scaling)
             extras['normed_cc'] = normed_cc
             extras['cc_sensitivity'] = tet_sens
 

@@ -41,6 +41,7 @@ import gc
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 import pyvista as pv
+from utils.densification import collect_render_stats, apply_densification
 
 
 torch.set_num_threads(1)
@@ -271,7 +272,6 @@ video_writer = cv2.VideoWriter(str(args.output_path / "training.mp4"), cv2.CAP_F
                                pad_hw2even(sample_camera.image_width, sample_camera.image_height))
 
 # cc_locations = []
-vert_alive = torch.ones((model.contracted_vertices.shape[0]), dtype=bool, device=device)
 
 tet_optim.build_tv()
 progress_bar = tqdm(range(args.iterations))
@@ -286,7 +286,7 @@ for iteration in progress_bar:
 
     if do_delaunay or do_freeze:
         st = time.time()
-        tet_optim.update_triangulation(density_threshold=args.density_threshold, high_precision=do_freeze)
+        # tet_optim.update_triangulation(density_threshold=args.density_threshold, high_precision=do_freeze)
         if do_freeze:
             del tet_optim
             model, tet_optim = freeze_model(model, **args.as_dict())
@@ -305,18 +305,7 @@ for iteration in progress_bar:
     ray_jitter = torch.rand((camera.image_height, camera.image_width, 2), device=device)
     bg = 0
     render_pkg = render(camera, model, bg=bg, scene_scaling=model.scene_scaling, ray_jitter=ray_jitter, **args.as_dict())
-    # with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-    #          profile_memory=True, with_stack=True) as prof:
-    #     with record_function("model_inference"):
-    #         render_pkg = render(camera, model, min_t=model.scene_scaling * 0.1, **args.as_dict())
-
-    # print(prof.key_averages(group_by_input_shape=True).table(sort_by="self_cuda_memory_usage", row_limit=10))
-    # prof.export_chrome_trace("trace.json")
-
-    # torch.cuda.synchronize()
-    # print(f'render: {(time.time()-st)}')
-    image = render_pkg['render']#.clip(min=0, max=1)
-    vert_alive |= render_pkg['vert_alive'][:vert_alive.shape[0]]
+    image = render_pkg['render']
 
     # ----- Apply bilateral grid transformation if enabled -----
     if args.use_bilateral_grid:
@@ -367,11 +356,6 @@ for iteration in progress_bar:
     mask = render_pkg['mask']
     cc = render_pkg['normed_cc']
     st = time.time()
-    # # loss += args.lambda_alpha * (-4 * alphas * (alphas-1)).mean()
-    # loss += args.lambda_alpha * - ((alphas * safe_math.safe_log(alphas) + (1-alphas) * safe_math.safe_log(1-alphas))).mean()
-    # x = render_pkg['density'][mask]
-    # loss += args.lambda_density * (x * (-x**2).exp()).mean()
-    # tet_optim.clip_gradient(args.grad_clip)
 
     loss.backward()
 
@@ -383,16 +367,6 @@ for iteration in progress_bar:
         tet_optim.sh_optim.zero_grad()
 
     if do_delaunay:
-        # alphas = compute_alpha(model.indices, model.vertices, render_pkg['density'], mask)
-        # v_perturb = compute_v_perturbation(
-        #     model.indices, model.vertices, cc, render_pkg['density'],
-        #     mask, render_pkg['cc_sensitivity'],
-        #     tet_optim.vertex_lr, k=100, t=args.perturb_t)
-        # model.perturb_vertices(args.lambda_noise * v_perturb)
-        # circumcenters = model.get_circumcenters()
-        # cc_locations.append(
-        #     model.contract(circumcenters.detach()).cpu().numpy()
-        # )
         tet_optim.vertex_optim.step()
         tet_optim.vertex_optim.zero_grad()
 
@@ -419,163 +393,28 @@ for iteration in progress_bar:
 
     if do_cloning and not model.frozen:
         with torch.no_grad():
-            # collect data
-            # print(f"Culling {(~vert_alive).sum()} dead vertices")
-            # tet_optim.remove_points(vert_alive)
+            sampled_cams = [train_cameras[i] for i in densification_sampler.nextids()]
 
-            sampled_cameras = [train_cameras[i] for i in densification_sampler.nextids()]
-            tet_moments = torch.zeros((model.indices.shape[0], 4), device=device)
-            tet_votes = torch.zeros((model.indices.shape[0], 4), device=device)
-            tet_count = torch.zeros((model.indices.shape[0]), device=device)
-            tet_size = torch.zeros((model.indices.shape[0]), device=device)
+            stats = collect_render_stats(sampled_cams, model, args, device)
+            target_addition = (
+                target_num((iteration - args.densify_start)//args.densify_interval + 1)
+                - model.vertices.shape[0]
+            )
 
-            total_split_votes = torch.zeros((model.indices.shape[0], 2), device=device)
-            total_grow_moments = torch.zeros((model.indices.shape[0], 3), device=device)
-            total_grow_votes = torch.zeros((model.indices.shape[0], 2), device=device)
-            split_rays = torch.zeros((model.indices.shape[0], 2, 6), device=device)
-            for camera in sampled_cameras:
-                target = camera.original_image.cuda()
-                image_votes, extras = render_err(target, camera, model,
-                                             scene_scaling=model.scene_scaling,
-                                             tile_size=args.tile_size,
-                                             density_t=args.density_t,
-                                             lambda_ssim=args.clone_lambda_ssim)
-                density = extras['cell_values'][:, 0]
-                tc = extras['tet_count']
-                # num_votes = extras['pixel_err'].sum()
+            apply_densification(
+                stats,
+                model       = model,
+                tet_optim   = tet_optim,
+                args        = args,
+                iteration   = iteration,
+                device      = device,
+                sample_cam  = sample_camera,
+                sample_image= sample_image,     # whatever RGB debug frame you use
+                target_addition= target_addition
 
-                # -----------------------------------------------------------------------
-                # Split
-                # -----------------------------------------------------------------------
-                split_mask = (tc > 2000) | (tc < 4)
-                s0 = image_votes[:, 0] 
-                s1 = image_votes[:, 1]
-                s2 = image_votes[:, 2]
-                split_mu = safe_math.safe_div(s1, s0)
-                split_std = safe_math.safe_div(s2, s0) - split_mu**2
-                split_std[s0 < 1] = 0
-                split_std[split_mask] = 0
-
-                split_votes = s0 * split_std
-
-                w = image_votes[:, 12:13]
-                seg_exit = safe_math.safe_div(image_votes[:, 9:12], w)
-                seg_enter = safe_math.safe_div(image_votes[:, 6:9], w)
-                rays = torch.cat([ seg_enter, seg_exit ], dim=1)
-
-                # ---------- keep the *three* candidates then drop the worst -----------
-                # votes: shape (N, 3)   rays: shape (N, 3, 3)
-                votes_3 = torch.cat([total_split_votes, split_votes.unsqueeze(1)], dim=1)
-                rays_3  = torch.cat([split_rays,    rays.unsqueeze(1)],    dim=1)
-
-                votes_sorted, idx_sorted = votes_3.sort(dim=1, descending=True)
-                total_split_votes = votes_sorted[:, :2]
-                split_rays    = torch.gather(
-                    rays_3,
-                    dim=1,
-                    index=idx_sorted[:, :2].unsqueeze(-1).expand(-1, -1, 6)
-                )
-
-                # -----------------------------------------------------------------------
-                # Grow
-                # -----------------------------------------------------------------------
-                grow_mask = (tc < 2000) & (tc > 4)
-                total_grow_moments[grow_mask] += image_votes[grow_mask, 3:6]
-                tet_moments[grow_mask, :3] += image_votes[grow_mask, 13:16]
-                tet_moments[grow_mask, 3] += image_votes[grow_mask, 3]
-                # s0 = image_votes[:, 3] 
-                # s1 = image_votes[:, 4]
-                # s2 = image_votes[:, 5]
-                # grow_mu = safe_math.safe_div(s1, s0)
-                # grow_std = safe_math.safe_div(s2, s0) - grow_mu**2
-                # grow_std[s0 < 1e-4] = 0
-                # grow_votes = grow_std
-                # grow_votes[grow_mask] = 0
-                # total_grow_votes = torch.sort(torch.cat([
-                #     total_grow_votes, grow_votes.reshape(-1, 1)
-                # ], dim=1), dim=1).values[:, 1:]
-                tet_count += tc > 0
-                tet_size += tc
+            )
+            gc.collect()
             torch.cuda.empty_cache()
-
-            split_score = total_split_votes.sum(dim=1)
-
-            s0 = total_grow_moments[:, 0] 
-            s1 = total_grow_moments[:, 1]
-            s2 = total_grow_moments[:, 2]
-            grow_mu = safe_math.safe_div(s1, s0)
-            grow_std = safe_math.safe_div(s2, s0) - grow_mu**2
-            grow_std[s0 < 1] = 0
-            grow_score = s0 * grow_std
-            alphas = compute_alpha(model.indices, model.vertices, model.calc_tet_density()).reshape(-1)
-            grow_score[alphas < args.clone_min_alpha] = 0
-            split_score[alphas < args.clone_min_alpha] = 0
-
-
-            target = target_num((iteration - args.densify_start) // args.densify_interval + 1)
-            target_addition = target - model.vertices.shape[0]
-            if target_addition > 0:
-                target_split = args.percent_split * target_addition
-                target_grow = (1-args.percent_split) * target_addition
-                split_mask = torch.zeros((split_score.shape[0]), device=device, dtype=bool)
-                grow_mask = torch.zeros((split_score.shape[0]), device=device, dtype=bool)
-                grow_mask[torch.topk(grow_score, int(target_grow))[1]] = True
-                grow_mask &= grow_score > 0
-                split_score[grow_mask] = 0
-
-                split_mask[torch.topk(split_score, int(target_split))[1]] = True
-                split_mask &= split_score > 0
-                # grow_score[split_mask] = 0
-                clone_mask = split_mask | grow_mask
-
-                f = clone_mask.float().reshape(-1, 1).expand(-1, 4).clone()
-                f[:, :3] = torch.rand_like(f[:, :3])
-                f[:, 3] *= 1.0
-                binary_im = render_debug(f, model, sample_camera, 10)
-                imageio.imwrite(args.output_path / f'densify{iteration}.png', binary_im)
-                clone_indices = model.indices[clone_mask]
-
-                split_ratio_img = render_debug(split_score.reshape(-1, 1), model, sample_camera)
-                grow_ratio_img = render_debug(grow_score.reshape(-1, 1), model, sample_camera)
-                imageio.imwrite(args.output_path / f'split{iteration}.png', split_ratio_img)
-                imageio.imwrite(args.output_path / f'grow{iteration}.png', grow_ratio_img)
-                imageio.imwrite(args.output_path / f'im{iteration}.png', cv2.cvtColor(sample_image, cv2.COLOR_BGR2RGB))
-                # di = render_pkg['distortion_img'].detach().cpu().numpy().reshape
-                # di = (cmap(di / di.max())*255).clip(min=0, max=255).astype(np.uint8)
-                # imageio.imwrite(args.output_path / f'di{iteration}.png', di)
-
-                split_point = torch.zeros((model.indices.shape[0], 3), device=device)
-                grow_point = safe_math.safe_div(tet_moments[:, :3], tet_moments[:, 3:4])
-                split_point, bad_intersect = get_approx_ray_intersections(split_rays)
-                split_point[bad_intersect] = grow_point[bad_intersect]
-                split_point[grow_mask] = grow_point[grow_mask]
-                tet_optim.split(clone_indices, split_point[clone_mask], args.split_mode)
-
-
-                out = f"#Split: {split_mask.sum()} "
-                out += f"#Grow: {grow_mask.sum()} "
-                out += f"#T_Split: {target_split} "
-                out += f"#T_Grow: {target_grow} "
-                out += f"Grow Ratio: {total_grow_votes.mean()} "
-                out += f"Split Ratio: {total_split_votes.mean()} "
-                out += f"target_addition: {target_addition} "
-                print(out)
-
-                # clone vertices
-                raw_verts = model.contracted_vertices
-                stored_state = tet_optim.vertex_optim.get_state_by_name('contracted_vertices')
-                velocity = stored_state['exp_avg'] * args.speed_mul
-                J_d = topo_utils.contraction_jacobian_d_in_chunks(
-                    model.vertices[:model.contracted_vertices.shape[0]]).reshape(-1, 1)
-                speed = torch.linalg.norm(velocity * J_d, dim=1)
-                mask = speed > args.clone_velocity
-                new_verts = (raw_verts + velocity)[mask]
-                print(f"Adding {new_verts.shape[0]} new verts using velocity. Mean velocity: {speed.mean()}")
-                tet_optim.add_points(new_verts, raw_verts=True)
-
-                gc.collect()
-                torch.cuda.empty_cache()
-                vert_alive = torch.zeros((model.contracted_vertices.shape[0]), dtype=bool, device=device)
 
     psnr = 20 * math.log10(1.0 / math.sqrt(l2_loss.detach().cpu().item()))
     psnrs[-1].append(psnr)

@@ -175,6 +175,7 @@ class Model(nn.Module):
         output = checkpoint(self.backbone, x, cr, use_reentrant=True)
         return circumcenter, normalized, *output
 
+    @staticmethod
     def load_ckpt(path: Path, device):
         data_dict = tinyplypy.read_ply(str(path / "ckpt.ply"))
         tet_data = data_dict["tetrahedron"]
@@ -184,6 +185,7 @@ class Model(nn.Module):
         config = Args.load_from_json(str(config_path))
         ckpt = torch.load(ckpt_path)
         vertices = ckpt['contracted_vertices']
+        # indices = ckpt["indices"]  # shape (N,4)
         print(f"Loaded {vertices.shape[0]} vertices")
         temp = config.contract_vertices
         config.contract_vertices = False
@@ -192,8 +194,7 @@ class Model(nn.Module):
         model.load_state_dict(ckpt)
         model.contract_vertices = temp
         model.min_t = model.scene_scaling * config.base_min_t
-        # model.indices = torch.as_tensor(indices).cuda()
-        # model.boundary_tets = torch.zeros((indices.shape[0]), dtype=bool, device='cuda')
+        model.indices = torch.as_tensor(indices).cuda()
         return model
 
     @torch.no_grad
@@ -583,8 +584,8 @@ class TetOptimizer:
         self.net_optim.step()
 
     def main_zero_grad(self):
-        self.optim.zero_grad()
-        self.net_optim.zero_grad()
+        self.optim.zero_grad(set_to_none=True)
+        self.net_optim.zero_grad(set_to_none=True)
 
     @property
     def sh_optim(self):
