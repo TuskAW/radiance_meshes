@@ -48,15 +48,11 @@ def init_linear(m, gain):
             nn.init.zeros_(m.bias)
 
 @torch.jit.script
-def pre_calc_cell_values(vertices, indices, center, scene_scaling: float):
+def pre_calc_cell_values(vertices, indices):
     device = vertices.device
     tets = vertices[indices]
     circumcenter, radius = calculate_circumcenters_torch(tets.double())
-    # clipped_circumcenter = project_points_to_tetrahedra(circumcenter.float(), tets)
-    clipped_circumcenter = circumcenter
-    normalized = (clipped_circumcenter - center) / scene_scaling
-    cv, cr = contract_mean_std(normalized, radius / scene_scaling)
-    return clipped_circumcenter, cv.float(), cr, normalized
+    return circumcenter
 
 # @torch.jit.script
 def compute_gradient_from_vertex_colors(

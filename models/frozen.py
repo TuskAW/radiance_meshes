@@ -400,9 +400,7 @@ class FrozenTetOptimizer:
             {"params": [model.gradient], "lr": gradient_lr, "name": "gradient"},
             {"params": [model.sh],       "lr": sh_lr,       "name": "sh"},
         ])
-        self.sh_optim = torch.optim.SGD([
-            {"params": [model.sh],       "lr": sh_lr,       "name": "sh"},
-        ])
+        self.sh_optim = None
 
         # alias for external training scripts that expected these names
         self.net_optim   = self.optim

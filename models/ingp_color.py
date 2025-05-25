@@ -164,13 +164,15 @@ class Model(nn.Module):
 
     def compute_batch_features(self, vertices, indices, start, end, circumcenters=None):
         if circumcenters is None:
-            circumcenter, cv, cr, normalized =  pre_calc_cell_values(
-                vertices, indices[start:end], self.center, self.scene_scaling)
+            # circumcenter, cv, cr, normalized =  pre_calc_cell_values(
+            #     vertices, indices[start:end], self.center, self.scene_scaling)
+            tets = vertices[indices[start:end]]
+            circumcenter, radius = calculate_circumcenters_torch(tets.double())
         else:
             circumcenter = circumcenters[start:end]
-            normalized = (circumcenter - self.center) / self.scene_scaling
-            radius = torch.linalg.norm(circumcenter - vertices[indices[start:end, 0]], dim=-1)
-            cv, cr = contract_mean_std(normalized, radius / self.scene_scaling)
+        normalized = (circumcenter - self.center) / self.scene_scaling
+        radius = torch.linalg.norm(circumcenter - vertices[indices[start:end, 0]], dim=-1)
+        cv, cr = contract_mean_std(normalized, radius / self.scene_scaling)
         x = (cv/2 + 1)/2
         output = checkpoint(self.backbone, x, cr, use_reentrant=True)
         return circumcenter, normalized, *output

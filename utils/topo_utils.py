@@ -10,6 +10,7 @@ from submodules.spectral_norm3 import compute_spectral_norm3
 from utils.contraction import contract_points, contraction_jacobian, contraction_jacobian_d_in_chunks
 import math
 from scipy.spatial import ConvexHull
+from utils.safe_math import safe_div
 
 
 @torch.jit.script
@@ -137,14 +138,15 @@ def calculate_circumcenters_torch(vertices: torch.Tensor):
     denominator = 2.0 * torch.sum(a * cross_bc, dim=-1, keepdim=True)
 
     # Create mask for small denominators
-    mask = torch.abs(denominator) < 1e-6
+    mask = torch.abs(denominator) < 1e-10
 
     # Compute circumcenter relative to verts[0]
-    relative_circumcenter = (
-        aa * cross_bc +
-        bb * cross_ca +
-        cc * cross_ab
-    ) / torch.where(mask, torch.ones_like(denominator), denominator)
+    relative_circumcenter = safe_div(aa * cross_bc + bb * cross_ca + cc * cross_ab, denominator)
+    # relative_circumcenter = (
+    #     aa * cross_bc +
+    #     bb * cross_ca +
+    #     cc * cross_ab
+    # ) / torch.where(mask, torch.ones_like(denominator), denominator)
 
     # Compute circumradius
     radius = torch.norm(a - relative_circumcenter, dim=-1)
