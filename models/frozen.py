@@ -12,6 +12,7 @@ from utils.topo_utils import (
 from utils.model_util import activate_output
 from utils import optim
 from utils.model_util import *
+from utils.train_util import get_expon_lr_func, SpikingLR
 
 
 class FrozenTetModel(nn.Module):
@@ -386,6 +387,8 @@ class FrozenTetOptimizer:
         weight_decay: float = 1e-10,
         lambda_tv:    float = 0.0,
         lambda_density: float = 0.0,
+        freeze_start: int = 15000,
+        iterations: int = 30000,
     ) -> None:
         self.model = model
         self.weight_decay   = weight_decay
@@ -395,7 +398,8 @@ class FrozenTetOptimizer:
         # ------------------------------------------------------------------
         # single optimiser with four parameter groups
         # ------------------------------------------------------------------
-        self.optim = torch.optim.RMSprop([
+        # self.optim = torch.optim.RMSprop([
+        self.optim = torch.optim.Adam([
             {"params": [model.density],  "lr": density_lr,  "name": "density"},
             {"params": [model.rgb],      "lr": color_lr,    "name": "color"},
             {"params": [model.gradient], "lr": gradient_lr, "name": "gradient"},
@@ -408,10 +412,11 @@ class FrozenTetOptimizer:
             gradient = gradient_lr / density_lr,
             sh = sh_lr / density_lr,
         )
+        self.freeze_start = freeze_start
         self.scheduler = get_expon_lr_func(lr_init=density_lr,
                                            lr_final=final_density_lr,
                                            lr_delay_mult=lr_delay_multi,
-                                           max_steps=max_steps,
+                                           max_steps=iterations - self.freeze_start,
                                            lr_delay_steps=lr_delay)
 
         # alias for external training scripts that expected these names
@@ -446,7 +451,7 @@ class FrozenTetOptimizer:
         for param_group in self.optim.param_groups:
             # if param_group["name"] == "network":
             ratio = self.ratios[param_group["name"]]
-            lr = self.net_scheduler_args(iteration)
+            lr = self.net_scheduler_args(iteration - self.freeze_start)
             param_group['lr'] = ratio * lr
 
     @torch.no_grad()
