@@ -79,8 +79,8 @@ args.sh_interval = 0
 args.sh_step = 1
 
 # iNGP Settings
-args.encoding_lr = 6e-3
-args.final_encoding_lr = 6e-4
+args.encoding_lr = 3e-3
+args.final_encoding_lr = 3e-4
 args.network_lr = 1e-3
 args.final_network_lr = 1e-4
 args.hidden_dim = 64
@@ -89,6 +89,7 @@ args.log2_hashmap_size = 22
 args.per_level_scale = 2
 args.L = 10
 args.density_offset = -4
+args.density_beta = 0.5
 args.weight_decay = 0.01
 args.hashmap_dim = 4
 args.grad_clip = 1e-2
@@ -141,6 +142,7 @@ args.clone_min_density = 1e-3
 args.normalize_err = False
 args.percent_split = 1.0
 args.density_t = 1.0
+args.diff_threshold = 0.0
 
 args.lambda_noise = 0.0
 args.perturb_t = 1-0.005
@@ -191,7 +193,8 @@ min_t = args.min_t = args.base_min_t * model.scene_scaling.item()
 
 tet_optim = TetOptimizer(model, **args.as_dict())
 if args.eval:
-    sample_camera = test_cameras[args.sample_cam]
+    # sample_camera = test_cameras[args.sample_cam]
+    sample_camera = train_cameras[args.sample_cam]
 else:
     sample_camera = train_cameras[args.sample_cam]
 
@@ -446,6 +449,7 @@ for iteration in progress_bar:
                 target_addition= target_addition
 
             )
+            tet_optim.prune(**args.as_dict())
             gc.collect()
             torch.cuda.empty_cache()
 

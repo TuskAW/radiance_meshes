@@ -580,16 +580,16 @@ VarInfo kern_calc_tet_err(TensorView<int32_t> sorted_gauss_idx,
                     float old_val;
                     int32_t old_ival;
                     tet_err.InterlockedAdd(uint2(g_idx, 3), T, old_val);
-                    tet_err.InterlockedAdd(uint2(g_idx, 4), T * mismatch, old_val);
-                    tet_err.InterlockedAdd(uint2(g_idx, 5), T * mismatch * mismatch, old_val);
-                    float3 centroid = tetra_ctrl.dist.y * ray.d + ray.o;
+                    tet_err.InterlockedAdd(uint2(g_idx, 4), 1 * mismatch, old_val);
+                    tet_err.InterlockedAdd(uint2(g_idx, 5), 1 * mismatch * mismatch, old_val);
+                    float3 centroid = tetra_ctrl.dist.x * ray.d + ray.o;
                     tet_err.InterlockedAdd(uint2(g_idx, 13), T * centroid.x, old_val);
                     tet_err.InterlockedAdd(uint2(g_idx, 14), T * centroid.y, old_val);
                     tet_err.InterlockedAdd(uint2(g_idx, 15), T * centroid.z, old_val);
 
                     split_info.S0 = T;
-                    split_info.S1 = T * mismatch;
-                    split_info.S2 = T * mismatch * mismatch;
+                    split_info.S1 = 1 * mismatch;
+                    split_info.S2 = 1 * mismatch * mismatch;
 
                     tet_err.InterlockedAdd(uint2(split_info.g_idx, 0), split_info.S0, old_val);
                     tet_err.InterlockedAdd(uint2(split_info.g_idx, 1), split_info.S1, old_val);

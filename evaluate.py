@@ -28,9 +28,12 @@ if args.use_ply:
     from models.tet_color import Model
     model = Model.load_ply(args.output_path / "ckpt.ply", device)
 else:
-    # from models.ingp_color import Model
-    from models.frozen import FrozenTetModel as Model
-    model = Model.load_ckpt(args.output_path, device)
+    from models.ingp_color import Model
+    from models.frozen import FrozenTetModel
+    try:
+        model = Model.load_ckpt(args.output_path, device)
+    except:
+        model = FrozenTetModel.load_ckpt(args.output_path, device)
 
 # model.light_offset = -1
 train_cameras, test_cameras, scene_info = loader.load_dataset(

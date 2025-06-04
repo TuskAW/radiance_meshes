@@ -17,6 +17,7 @@ class RenderStats(NamedTuple):
     total_grow_moments: torch.Tensor   # (T, 3)
     tet_moments       : torch.Tensor   # (T, 4)
     tet_count         : torch.Tensor   # (T,)
+    grow_count         : torch.Tensor   # (T,)
     tet_size          : torch.Tensor   # (T,)
 
 
@@ -34,6 +35,7 @@ def collect_render_stats(
     tet_moments        = torch.zeros((n_tets, 4),     device=device)
     tet_votes          = torch.zeros((n_tets, 4),     device=device)  # <-- kept for parity
     tet_count          = torch.zeros((n_tets,),       device=device)
+    grow_count          = torch.zeros((n_tets,),       device=device)
     tet_size           = torch.zeros_like(tet_count)
 
     total_split_votes  = torch.zeros((n_tets, 2),     device=device)
@@ -56,12 +58,18 @@ def collect_render_stats(
         density = extras["cell_values"][:, 0]          # kept for completeness
 
         # -------- Split -------------------------------------------------------
-        split_mask = (tc > 2000) | (tc < args.min_tet_count)
+        split_mask = (tc > 8000) | (tc < args.min_tet_count)
 
-        s0, s1, s2  = image_votes[:, 0], image_votes[:, 1], image_votes[:, 2]
-        split_mu    = safe_math.safe_div(s1, s0)
-        split_std   = safe_math.safe_div(s2, s0) - split_mu ** 2
-        split_std[s0 < 1]   = 0
+        # s0, s1, s2  = image_votes[:, 0], image_votes[:, 1], image_votes[:, 2]
+        s0 = image_votes[:, 0]
+        N, s1, s2  = tc, image_votes[:, 1], image_votes[:, 2]
+        split_mu    = safe_math.safe_div(s1, N)
+        # split_std   = safe_math.safe_div(s2, N-1) - safe_math.safe_div(s1, N) * safe_math.safe_div(s1, N-1)
+        split_std   = safe_math.safe_div(s2, N) - split_mu**2
+        # ic(safe_math.safe_div(s2, N)[N > 10], safe_math.safe_div(s1, N)[N > 10])
+        # ic(split_std.min(), split_std.mean(), split_mu, (split_std > 0).sum())
+        # split_std[s0 < 1]   = 0
+        split_std[N < 10] = 0
         split_std[split_mask] = 0
 
         split_votes = s0 * split_std
@@ -84,14 +92,18 @@ def collect_render_stats(
         )
 
         # -------- Grow --------------------------------------------------------
-        grow_mask = (tc < 2000) & (tc > args.min_tet_count)
-        total_grow_moments[grow_mask] += image_votes[grow_mask, 3:6]
+        grow_mask = (tc < 8000) & (tc > args.min_tet_count)
+        # total_grow_moments[grow_mask] += image_votes[grow_mask, 3:6]
+        total_grow_moments[grow_mask, 0] += s0[grow_mask]
+        total_grow_moments[grow_mask, 1] += s1[grow_mask]
+        total_grow_moments[grow_mask, 2] += s2[grow_mask]
 
         tet_moments[grow_mask, :3] += image_votes[grow_mask, 13:16]
         tet_moments[grow_mask, 3]  += image_votes[grow_mask, 3]
 
         tet_count += (tc > 0)
         tet_size  += tc
+        grow_count[grow_mask] += tc[grow_mask]
 
     # done
     return RenderStats(
@@ -100,6 +112,7 @@ def collect_render_stats(
         total_grow_moments = total_grow_moments,
         tet_moments        = tet_moments,
         tet_count          = tet_count,
+        grow_count         = grow_count,
         tet_size           = tet_size,
     )
 
@@ -122,12 +135,15 @@ def apply_densification(
     """Turns accumulated statistics into actual vertex cloning / splitting."""
     # ---------- split & grow scores ------------------------------------------
     split_score = stats.total_split_votes.sum(1)
+    target_addition = min(target_addition, stats.tet_count.shape[0])
 
-    s0, s1, s2  = stats.total_grow_moments.t()
-    grow_mu     = safe_math.safe_div(s1, s0)
-    grow_std    = safe_math.safe_div(s2, s0) - grow_mu**2
-    grow_std[s0 < 1] = 0
-    grow_score  = s0 * grow_std
+    s0, s1, s2  = stats.total_grow_moments[:, 0], stats.total_grow_moments[:, 1], stats.total_grow_moments[:, 2]
+    N = stats.grow_count
+    grow_mu     = safe_math.safe_div(s1, N)
+    grow_std    = safe_math.safe_div(s2, N) - grow_mu**2
+    grow_std[N < 10] = 0
+    grow_score  = (s0 + 1e-3 * N) * grow_std.clip(min=0)
+    # ic(grow_std.min(), grow_mu[N > 10], safe_math.safe_div(s2, N)[N > 10], grow_std[N>10])
 
     alphas = compute_alpha(model.indices,
                            model.vertices,
@@ -135,10 +151,9 @@ def apply_densification(
     mask_alive = alphas >= args.clone_min_alpha
     grow_score [~mask_alive] = 0
     split_score [~mask_alive] = 0
-    # split_score[alphas < 0.2] = 0
 
     # ---------- quota for this iteration -------------------------------------
-    if target_addition <= 0:   # nothing to do
+    if target_addition < 0:   # nothing to do
         return
 
     target_split = int(args.percent_split * target_addition)
@@ -184,7 +199,7 @@ def apply_densification(
         stats.tet_moments[:, 3:4]
     )
     split_point[bad]      = grow_point[bad]   # fall back
-    split_point[grow_mask] = grow_point[grow_mask]
+    # split_point[grow_mask] = grow_point[grow_mask]
 
     tet_optim.split(clone_indices,
                     split_point[clone_mask],
@@ -195,12 +210,19 @@ def apply_densification(
     vstate       = tet_optim.vertex_optim.get_state_by_name("contracted_vertices")
     velocity     = vstate["exp_avg"] * args.speed_mul
 
-    J_d   = topo_utils.contraction_jacobian_d_in_chunks(
-                model.vertices[:raw_verts.shape[0]]).view(-1, 1)
-    speed = torch.linalg.norm(velocity * J_d, dim=1)
-    new_verts = (raw_verts + velocity)[speed > args.clone_velocity]
+    if model.contract_vertices:
+        J_d   = topo_utils.contraction_jacobian_d_in_chunks(
+                    model.vertices[:raw_verts.shape[0]]).view(-1, 1)
+        speed = torch.linalg.norm(velocity * J_d, dim=1)
+    else:
+        speed = torch.linalg.norm(velocity, dim=1)
+    if args.clone_velocity > 0:
+        new_verts = (raw_verts + velocity)[speed > args.clone_velocity]
 
-    tet_optim.add_points(new_verts, raw_verts=True)
+        tet_optim.add_points(new_verts, raw_verts=True)
+        num_cloned = new_verts.shape[0]
+    else:
+        num_cloned = 0
 
     # ---------- housekeeping --------------------------------------------------
     gc.collect()
@@ -213,6 +235,7 @@ def apply_densification(
         f"#T_Grow: {target_grow:4d}  "
         f"Grow Avg: {grow_score[grow_mask].mean():.4f}  "
         f"Split Avg: {split_score[split_mask].mean():.4f}  "
-        f"By Vel: {new_verts.shape[0]}  "
-        f"Added: {target_addition}"
+            f"Avg Speed: {speed.mean():.4e}  "
+        f"By Vel: {num_cloned}  "
+        f"T_Added: {target_addition}"
     )

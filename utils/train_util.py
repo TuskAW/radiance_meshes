@@ -445,8 +445,8 @@ def get_approx_ray_intersections(split_rays_data, epsilon=1e-7):
 
     # Clamp parameters to [0, 1] to stay within the segments
     bad_intersect = (s_line < 0) | (t_line < 0) | (s_line > 1) | (t_line > 1)
-    s_seg = torch.clamp(s_line, 0.0, 1.0)
-    t_seg = torch.clamp(t_line, 0.0, 1.0)
+    s_seg = torch.clamp(s_line, 0.0, 1.0) - 2
+    t_seg = torch.clamp(t_line, 0.0, 1.0) - 2
     # s_seg = s_line.clip(min=0)
     # t_seg = t_line.clip(min=0)
 

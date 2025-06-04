@@ -8,6 +8,7 @@ from torch import nn
 from icecream import ic
 
 from utils.topo_utils import calculate_circumcenters_torch, fibonacci_spiral_on_sphere, calc_barycentric, sample_uniform_in_sphere, project_points_to_tetrahedra, contraction_jacobian_d_in_chunks
+from utils import topo_utils
 from utils.safe_math import safe_exp, safe_div, safe_sqrt
 from utils.contraction import contract_mean_std
 from utils.contraction import contract_points, inv_contract_points
@@ -133,6 +134,12 @@ class Model(nn.Module):
         center = ccenters.mean(dim=0)
         scaling = torch.linalg.norm(ccenters - center.reshape(1, 3), dim=1, ord=torch.inf).max()
 
+        # add sphere
+        pcd_scaling = torch.linalg.norm(vertices - center.cpu().reshape(1, 3), dim=1, ord=2).max()
+        new_radius = pcd_scaling.cpu().item()
+
+        vertices = sample_uniform_in_sphere(10000, 3, base_radius=0, radius=new_radius, device='cpu') + center.reshape(1, 3).cpu()
+
         # vertices = vertices + torch.randn(*vertices.shape) * 1e-3
         # v = Del(vertices.shape[0])
         # indices_np, prev = v.compute(vertices.detach().cpu().double())
@@ -141,16 +148,12 @@ class Model(nn.Module):
         # vertices = vertices[indices_np].mean(dim=1)
         # vertices = vertices + torch.randn(*vertices.shape) * 1e-3
 
-        # add sphere
-        pcd_scaling = torch.linalg.norm(vertices - center.cpu().reshape(1, 3), dim=1, ord=2).max()
-
         if ext_convex_hull:
             ext_vertices = expand_convex_hull(vertices, 5, device=vertices.device)
             num_ext = ext_vertices.shape[0]
         else:
-            new_radius = pcd_scaling.cpu().item()
-            within_sphere = sample_uniform_in_sphere(10000, 3, base_radius=new_radius, radius=new_radius, device='cpu') + center.reshape(1, 3).cpu()
-            vertices = torch.cat([vertices, within_sphere], dim=0)
+            # within_sphere = sample_uniform_in_sphere(10000, 3, base_radius=new_radius, radius=new_radius, device='cpu') + center.reshape(1, 3).cpu()
+            # vertices = torch.cat([vertices, within_sphere], dim=0)
             num_ext = 1000
             ext_vertices = fibonacci_spiral_on_sphere(num_ext, new_radius, device='cpu') + center.reshape(1, 3).cpu()
         num_ext = ext_vertices.shape[0]
@@ -271,22 +274,6 @@ class Model(nn.Module):
         alphas = torch.cat(alpha_list, dim=0)
         return alphas
 
-    def tet_variability(self):
-        vertices = self.vertices
-        indices = self.indices
-        tet_var = torch.zeros((indices.shape[0]), device=vertices.device)
-        for start in range(0, indices.shape[0], self.chunk_size):
-            end = min(start + self.chunk_size, indices.shape[0])
-
-            circumcenters, _, density, rgb, grd, sh = self.compute_batch_features(vertices, indices, start, end)
-            vcolors = compute_vertex_colors_from_field(
-                vertices[indices[start:end]].detach(), rgb.float(), grd.float(),
-                circumcenters.float().detach())
-            vcolors = torch.nn.functional.softplus(vcolors, beta=10)
-            tet_var[start:end] = vcolors.std(dim=1).mean(dim=1)
-            # tet_var[start:end] = torch.linalg.norm(clipped_gradients, dim=-1).mean(dim=-1)
-        return tet_var
-
     def calc_tet_density(self):
         densities = []
         verts = self.vertices
@@ -352,6 +339,7 @@ class Model(nn.Module):
             tetra_dict[f"grd_{co}"]         = np.ascontiguousarray(grds[:, i])
 
         sh_0 = RGB2SH(base_color_v0_raw)
+        ic(sh_0.shape)
         tetra_dict[f"sh_0_r"] = np.ascontiguousarray(sh_0[:, 0])
         tetra_dict[f"sh_0_g"] = np.ascontiguousarray(sh_0[:, 1])
         tetra_dict[f"sh_0_b"] = np.ascontiguousarray(sh_0[:, 2])
@@ -551,9 +539,9 @@ class TetOptimizer:
         ))['contracted_vertices']
         self.model.update_triangulation()
 
-    def remove_points(self, mask: torch.Tensor):
-        mask = mask[:self.model.contracted_vertices.shape[0]]
-        self.model.contracted_vertices = self.vertex_optim.prune_optimizer(mask)['contracted_vertices']
+    def remove_points(self, keep_mask: torch.Tensor):
+        keep_mask = keep_mask[:self.model.contracted_vertices.shape[0]]
+        self.model.contracted_vertices = self.vertex_optim.prune_optimizer(keep_mask)['contracted_vertices']
         self.model.update_triangulation()
 
     @torch.no_grad()
@@ -580,7 +568,7 @@ class TetOptimizer:
             new_vertex_location = split_point
             # new_vertex_location = (self.model.vertices[clone_indices] * barycentric_weights.unsqueeze(-1)).sum(dim=1)
         elif split_mode == "split_point_c":
-            barycentric_weights = calc_barycentric(split_point, clone_vertices)
+            barycentric_weights = calc_barycentric(split_point, clone_vertices).clip(min=0)
             barycentric_weights = barycentric_weights / (1e-3+barycentric_weights.sum(dim=1, keepdim=True))
             barycentric_weights += 1e-4*torch.randn(*barycentric_weights.shape, device=self.model.device)
             new_vertex_location = (self.model.vertices[clone_indices] * barycentric_weights.unsqueeze(-1)).sum(dim=1)
@@ -624,9 +612,30 @@ class TetOptimizer:
 
     def update_triangulation(self, **kwargs):
         self.model.update_triangulation(**kwargs)
-        self.build_tv()
+        if self.lambda_tv > 0:
+            self.build_tv()
 
     def build_tv(self):
-        if self.lambda_tv > 0:
-            self.pairs, self.face_area = topo_utils.build_tv_struct(
-                self.model.vertices.detach(), self.model.indices, device='cuda')
+        self.pairs, self.face_area = topo_utils.build_tv_struct(
+            self.model.vertices.detach(), self.model.indices, device='cuda')
+
+    def prune(self, diff_threshold, **kwargs):
+        if diff_threshold <= 0:
+            return
+        density = self.model.calc_tet_density()
+        self.build_tv()
+        diff  = density[self.pairs[:,0]] - density[self.pairs[:,1]]
+        tet_diff  = (self.face_area * diff.abs()).reshape(-1)
+
+        indices = self.model.indices.long()
+        device = indices.device
+        vert_diff = torch.zeros((self.model.vertices.shape[0],), device=device)
+
+        reduce_type = "amax"
+        vert_diff.scatter_reduce_(dim=0, index=indices[..., 0], src=tet_diff, reduce=reduce_type)
+        vert_diff.scatter_reduce_(dim=0, index=indices[..., 1], src=tet_diff, reduce=reduce_type)
+        vert_diff.scatter_reduce_(dim=0, index=indices[..., 2], src=tet_diff, reduce=reduce_type)
+        vert_diff.scatter_reduce_(dim=0, index=indices[..., 3], src=tet_diff, reduce=reduce_type)
+        keep_mask = vert_diff > diff_threshold
+        print(f"Pruned {(~keep_mask).sum()} points. VD: {vert_diff.mean()} TD: {tet_diff.mean()}")
+        self.remove_points(keep_mask)
