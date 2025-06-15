@@ -244,8 +244,11 @@ class SpikingLR:
         return i / self.max_steps * (self.peak_lr_final - self.peak_lr_init) + self.peak_lr_init
         # return self.peak_lr_init
     
-    def peak_fn(self, i, height):
-        return height * math.exp(-i * 6/self.duration + 2/self.duration) / math.exp(2/self.duration)
+    def peak_fn(self, step, height):
+        t = np.clip(step / self.duration, 0, 1)
+        log_lerp = np.exp(np.log(height) * (1 - t) + np.log(1e-6) * t)
+        return log_lerp
+        # return height * math.exp(-step * 6/self.duration + 2/self.duration) / math.exp(2/self.duration)
 
     def __call__(self, iteration):
         base_f = self.base_function(iteration)

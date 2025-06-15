@@ -135,18 +135,20 @@ args.densify_interval = 500
 args.budget = 2_000_000
 args.clone_velocity = 0.1
 args.speed_mul = 100
-args.clone_min_alpha = 0.05
 args.percent_within = 0.0
 args.percent_total = 1.0
 args.diff_threshold = 0.0
 args.midpoint = 2000
+args.clone_min_alpha = 0.05
+args.clone_min_density = 0.01
 
 args.lambda_ssim = 0.2
 args.base_min_t = 0.2
-args.sample_cam = 4
+args.sample_cam = 10
 args.data_device = 'cpu'
 args.lambda_tv = 0.0
 args.density_threshold = 0.0
+args.alpha_threshold = 0.0
 
 args.voxel_size = 0.05
 args.init_repeat = 1
@@ -182,8 +184,8 @@ min_t = args.min_t = args.base_min_t * model.scene_scaling.item()
 
 tet_optim = TetOptimizer(model, **args.as_dict())
 if args.eval:
-    # sample_camera = test_cameras[args.sample_cam]
-    sample_camera = train_cameras[args.sample_cam]
+    sample_camera = test_cameras[args.sample_cam]
+    # sample_camera = train_cameras[args.sample_cam]
 else:
     sample_camera = train_cameras[args.sample_cam]
 
@@ -308,7 +310,7 @@ for iteration in progress_bar:
 
     if do_delaunay or do_freeze:
         st = time.time()
-        tet_optim.update_triangulation(density_threshold=args.density_threshold, high_precision=do_freeze)
+        tet_optim.update_triangulation(density_threshold=args.density_threshold, alpha_threshold=args.alpha_threshold, high_precision=do_freeze)
         if do_freeze:
             del tet_optim
             model, tet_optim = freeze_model(model, **args.as_dict())

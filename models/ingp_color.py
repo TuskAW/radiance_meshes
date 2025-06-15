@@ -250,7 +250,7 @@ class Model(BaseModel):
         self.current_sh_deg = min(self.max_sh_deg, self.current_sh_deg+1)
 
     @torch.no_grad()
-    def update_triangulation(self, high_precision=False, density_threshold=0.0):
+    def update_triangulation(self, high_precision=False, density_threshold=0.0, alpha_threshold=0.0):
         torch.cuda.empty_cache()
         verts = self.vertices
         if high_precision:
@@ -264,8 +264,10 @@ class Model(BaseModel):
             del prev
         
         self.indices = torch.as_tensor(indices_np).cuda()
-        if density_threshold > 0:
-            mask = self.calc_tet_density() > density_threshold
+        if density_threshold > 0 or alpha_threshold > 0:
+            tet_density = self.calc_tet_density()
+            tet_alpha = self.calc_tet_alpha(mode="min", density=tet_density)
+            mask = (tet_density > density_threshold) | (tet_alpha > alpha_threshold)
             self.indices = self.indices[mask]
             
         torch.cuda.empty_cache()

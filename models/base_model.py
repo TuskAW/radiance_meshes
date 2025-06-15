@@ -144,7 +144,7 @@ class BaseModel(nn.Module):
         vertex_density.scatter_reduce_(dim=0, index=indices[..., 3], src=density, reduce=reduce_type)
         return vertex_density
 
-    def calc_tet_alpha(self, mode="min"):
+    def calc_tet_alpha(self, mode="min", density=None):
         alpha_list = []
         start = 0
         
@@ -165,7 +165,7 @@ class BaseModel(nn.Module):
         else:
             raise ValueError(f"Unknown mode: {mode}. Use 'min', 'max', or 'mean'.")
         
-        density = self.calc_tet_density()
+        density = self.calc_tet_density() if density is None else density
         alpha = 1 - torch.exp(-density.reshape(-1) * el.reshape(-1))
         return alpha
 
