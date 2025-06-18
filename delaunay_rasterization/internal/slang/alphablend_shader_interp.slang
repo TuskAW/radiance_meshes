@@ -464,6 +464,7 @@ VarInfo kern_calc_tet_err(TensorView<int32_t> sorted_gauss_idx,
                   uint32_t tile_idx_start,
                   uint32_t tile_idx_end,
                   float pixel_err,
+                  float ssim_err,
                   float3 gt_pixel)
 {
     uint seed = hash_wang(pix_coord.x);
@@ -529,41 +530,37 @@ VarInfo kern_calc_tet_err(TensorView<int32_t> sorted_gauss_idx,
 
                     float T = grad_scale * ao.rgba.a * tetra_ctrl.rgba.a;
                     float T_p = grad_scale * ao.rgba.a;
-
                     // grow and split quantities
                     float err = pixel_err;
                     float mismatch = pixel_err;
 
                     float old_val;
                     int32_t old_ival;
-                    tet_err.InterlockedAdd(uint2(g_idx, 3), T, old_val);
-                    tet_err.InterlockedAdd(uint2(g_idx, 4), 1 * mismatch, old_val);
-                    tet_err.InterlockedAdd(uint2(g_idx, 5), 1 * mismatch * mismatch, old_val);
-                    float3 centroid = 0.5*(tetra_ctrl.dist.x+tetra_ctrl.dist.y) * ray.d + ray.o;
-                    tet_err.InterlockedAdd(uint2(g_idx, 13), T * centroid.x, old_val);
-                    tet_err.InterlockedAdd(uint2(g_idx, 14), T * centroid.y, old_val);
-                    tet_err.InterlockedAdd(uint2(g_idx, 15), T * centroid.z, old_val);
 
-                    split_info.S0 = T;
-                    split_info.S1 = 1 * mismatch;
-                    split_info.S2 = 1 * mismatch * mismatch;
+                    tet_err.InterlockedAdd(uint2(g_idx, 0), T, old_val);
+                    tet_err.InterlockedAdd(uint2(g_idx, 1), 1 * mismatch, old_val);
+                    tet_err.InterlockedAdd(uint2(g_idx, 2), 1 * mismatch * mismatch, old_val);
+                    T_p = 1;
+                    tet_err.InterlockedAdd(uint2(g_idx, 3), 1, old_val);
+                    tet_err.InterlockedAdd(uint2(g_idx, 4), T * abs(mismatch), old_val);
+                    tet_err.InterlockedAdd(uint2(g_idx, 5), T * ssim_err, old_val);
 
-                    tet_err.InterlockedAdd(uint2(split_info.g_idx, 0), split_info.S0, old_val);
-                    tet_err.InterlockedAdd(uint2(split_info.g_idx, 1), split_info.S1, old_val);
-                    tet_err.InterlockedAdd(uint2(split_info.g_idx, 2), split_info.S2, old_val);
+                    float w = T;
+                    float3 p1 = tetra_ctrl.dist.x * ray.d + ray.o;
+                    float3 p2 = tetra_ctrl.dist.y * ray.d + ray.o;
+                    tet_err.InterlockedAdd(uint2(g_idx, 6), w * p1.x, old_val);
+                    tet_err.InterlockedAdd(uint2(g_idx, 7), w * p1.y, old_val);
+                    tet_err.InterlockedAdd(uint2(g_idx, 8), w * p1.z, old_val);
+                    tet_err.InterlockedAdd(uint2(g_idx, 9), w * p2.x, old_val);
+                    tet_err.InterlockedAdd(uint2(g_idx, 10), w * p2.y, old_val);
+                    tet_err.InterlockedAdd(uint2(g_idx, 11), w * p2.z, old_val);
+                    tet_err.InterlockedAdd(uint2(g_idx, 12), w, old_val);
 
-                    split_info.g_idx = g_idx;
-                    split_info.dist = tetra_ctrl.dist;
-                    float w = split_info.S1;
-                    float3 p1 = split_info.dist.x * ray.d + ray.o;
-                    float3 p2 = split_info.dist.y * ray.d + ray.o;
-                    tet_err.InterlockedAdd(uint2(split_info.g_idx, 6), w * p1.x, old_val);
-                    tet_err.InterlockedAdd(uint2(split_info.g_idx, 7), w * p1.y, old_val);
-                    tet_err.InterlockedAdd(uint2(split_info.g_idx, 8), w * p1.z, old_val);
-                    tet_err.InterlockedAdd(uint2(split_info.g_idx, 9), w * p2.x, old_val);
-                    tet_err.InterlockedAdd(uint2(split_info.g_idx, 10), w * p2.y, old_val);
-                    tet_err.InterlockedAdd(uint2(split_info.g_idx, 11), w * p2.z, old_val);
-                    tet_err.InterlockedAdd(uint2(split_info.g_idx, 12), w, old_val);
+                    //float3 centroid = 0.5*(tetra_ctrl.dist.x+tetra_ctrl.dist.y) * ray.d + ray.o;
+                    float3 centroid = tetra_ctrl.dist.y * ray.d + ray.o;
+                    tet_err.InterlockedAdd(uint2(g_idx, 13), w * centroid.x, old_val);
+                    tet_err.InterlockedAdd(uint2(g_idx, 14), w * centroid.y, old_val);
+                    tet_err.InterlockedAdd(uint2(g_idx, 15), w * centroid.z, old_val);
 
                     tet_count.InterlockedAdd(g_idx, 1, old_ival);
 
@@ -592,6 +589,7 @@ void calc_tet_err(TensorView<int32_t> sorted_gauss_idx,
                  TensorView<float> output_img,
                  TensorView<float> gt,
                  TensorView<float> pixel_err,
+                 TensorView<float> ssim_err,
                  TensorView<float> tet_err,
                  TensorView<float> debug_img,
                  TensorView<int32_t> tet_count,
@@ -611,9 +609,11 @@ void calc_tet_err(TensorView<int32_t> sorted_gauss_idx,
 
 
     float this_pixel_err = 0;
+    float this_ssim_err = 0;
     float3 this_gt = {0.f, 0.f, 0.f};
     if (is_inside) {
         this_pixel_err = pixel_err[uint2(uint32_t(pix_coord.y), uint32_t(pix_coord.x))];
+        this_ssim_err = ssim_err[uint2(uint32_t(pix_coord.y), uint32_t(pix_coord.x))];
         this_gt = {
             gt[uint3(uint32_t(pix_coord.y), uint32_t(pix_coord.x), 0)],
             gt[uint3(uint32_t(pix_coord.y), uint32_t(pix_coord.x), 1)],
@@ -635,6 +635,7 @@ void calc_tet_err(TensorView<int32_t> sorted_gauss_idx,
         tile_idx_start,
         tile_idx_end,
         this_pixel_err,
+        this_ssim_err,
         this_gt);
     if (is_inside) {
       debug_img[uint3(uint32_t(pix_coord.y), uint32_t(pix_coord.x), 0)] = vi.S0;

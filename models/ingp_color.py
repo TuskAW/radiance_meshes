@@ -432,6 +432,9 @@ class TetOptimizer:
             r[r.abs() < 1e-2] = 1e-2
             sampled_radius = (r * self.split_std + 1) * radius
             new_vertex_location = l2_normalize_th(sphere_loc) * sampled_radius + circumcenters
+        elif split_mode == "barycenter":
+            barycentric_weights = 0.25*torch.ones((clone_indices.shape[0], clone_indices.shape[1], 1), device=device).clip(min=0.01, max=0.99)
+            new_vertex_location = (self.model.vertices[clone_indices] * barycentric_weights).sum(dim=1)
         elif split_mode == "barycentric":
             barycentric = torch.rand((clone_indices.shape[0], clone_indices.shape[1], 1), device=device).clip(min=0.01, max=0.99)
             barycentric_weights = barycentric / (1e-3+barycentric.sum(dim=1, keepdim=True))

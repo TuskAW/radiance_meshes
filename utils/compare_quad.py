@@ -122,6 +122,7 @@ def test_tetrahedra_rendering(vertices, indices, vertex_color, tet_density, view
         else:
             return tet_density, vertex_color
     model.get_cell_values = get_cell_values
+    model.mask_values = False
 
     render_pkg = render(camera, model, tile_size=tile_size, min_t=tmin, ladder_p=1, pre_multi=1, clip_multi=None)
     torch_image = render_pkg['render'].permute(1, 2, 0)

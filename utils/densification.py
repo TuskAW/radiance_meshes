@@ -22,6 +22,11 @@ class RenderStats(NamedTuple):
     tet_view_count: torch.Tensor             # (T,)
     total_var_count: torch.Tensor         # (T,)
     tet_size: torch.Tensor              # (T,)
+    peak_contrib: torch.Tensor              # (T,)
+    total_T: torch.Tensor
+    total_err: torch.Tensor
+    total_ssim: torch.Tensor
+    max_ssim: torch.Tensor
 
 
 @torch.no_grad()
@@ -41,6 +46,11 @@ def collect_render_stats(
     total_var_count = torch.zeros((n_tets,), device=device)
 
     total_within_var = torch.zeros((n_tets), device=device)
+    max_ssim = torch.zeros((n_tets), device=device)
+    total_ssim = torch.zeros((n_tets), device=device)
+    total_T = torch.zeros((n_tets), device=device)
+    total_err = torch.zeros((n_tets), device=device)
+    peak_contrib = torch.zeros((n_tets), device=device)
     total_within_var_votes = torch.zeros((n_tets, 2), device=device)
     within_var_rays = torch.zeros((n_tets, 2, 6), device=device)
     total_var_moments = torch.zeros((n_tets, 3), device=device)
@@ -65,16 +75,23 @@ def collect_render_stats(
         update_mask = (tc >= args.min_tet_count) & (tc < 8000)
 
         # --- Moments (s0: sum of T, s1: sum of err, s2: sum of err^2)
-        total_T, s1, s2 = image_votes[:, 0], image_votes[:, 1], image_votes[:, 2]
+        image_T, image_err, image_err2 = image_votes[:, 0], image_votes[:, 1], image_votes[:, 2]
+        # total_T_p, image_err, image_err2 = image_votes[:, 3], image_votes[:, 4], image_votes[:, 5]
+        _, image_Terr, image_ssim = image_votes[:, 3], image_votes[:, 4], image_votes[:, 5]
         N = tc
+        peak_contrib = torch.maximum(image_T, peak_contrib)
+        total_T += image_T
+        total_err += image_Terr
+        total_ssim += image_ssim
+        max_ssim = torch.maximum(image_ssim, max_ssim)
 
         # -------- Within-Image Variance (Top-2 per tet) -----------------------
-        within_var_mu = safe_math.safe_div(s1, N)
-        within_var_std = (safe_math.safe_div(s2, N) - within_var_mu**2).clip(min=0)
+        within_var_mu = safe_math.safe_div(image_err, N)
+        within_var_std = (safe_math.safe_div(image_err2, N) - within_var_mu**2).clip(min=0)
         within_var_std[N < 10] = 0
         within_var_std[~update_mask] = 0 # Use the unified mask
 
-        within_var_votes = total_T * within_var_std
+        within_var_votes = image_T * within_var_std
 
         # ray buffer: (enter | exit) → (N, 6)
         w = image_votes[:, 12:13]
@@ -95,23 +112,24 @@ def collect_render_stats(
         )
 
         # -------- Total Variance (accumulated across images) ------------------
-        total_var_moments[update_mask, 0] += total_T[update_mask]
-        total_var_moments[update_mask, 1] += s1[update_mask]
-        total_var_moments[update_mask, 2] += s2[update_mask]
+        total_var_moments[update_mask, 0] += N[update_mask]
+        # total_var_moments[update_mask, 0] += image_T[update_mask]
+        total_var_moments[update_mask, 1] += image_err[update_mask]
+        total_var_moments[update_mask, 2] += image_err2[update_mask]
         total_var_count[update_mask] += N[update_mask]
 
         # -------- Between-Image Variance (accumulated across images) ----------
         # We compute the variance of the mean error across different views
-        mean_err_per_view = safe_math.safe_div(s1, N)
+        mean_err_per_view = within_var_mu
         mean_err_per_view[N < 10] = 0
 
-        between_var_moments[update_mask, 0] += total_T[update_mask] # Use summed total_T as weight
+        between_var_moments[update_mask, 0] += image_T[update_mask] # Use summed image_T as weight
         between_var_moments[update_mask, 1] += mean_err_per_view[update_mask]
         between_var_moments[update_mask, 2] += (mean_err_per_view[update_mask])**2
 
         # -------- Other stats -------------------------------------------------
         tet_moments[update_mask, :3] += image_votes[update_mask, 13:16]
-        tet_moments[update_mask, 3] += image_votes[update_mask, 3]
+        tet_moments[update_mask, 3] += w[update_mask].reshape(-1)
 
         tet_view_count[update_mask] += 1 # Count views per tet
         tet_size += tc
@@ -127,6 +145,11 @@ def collect_render_stats(
         tet_view_count = tet_view_count,
         total_var_count = total_var_count,
         tet_size = tet_size,
+        peak_contrib = peak_contrib,
+        total_T = total_T,
+        total_err = total_err,
+        total_ssim = total_ssim,
+        max_ssim = max_ssim,
     )
 
 @torch.no_grad()
@@ -143,35 +166,43 @@ def apply_densification(
 ):
     """Turns accumulated statistics into actual vertex cloning / splitting."""
     # ---------- Calculate scores from variances ------------------------------
-    
+    total_T, s1_b, s2_b = stats.between_var_moments.T
     # 1. Total Variance Score (for growing)
     s0_t, s1_t, s2_t = stats.total_var_moments.T
     N_t = stats.total_var_count
-    total_var_mu = safe_math.safe_div(s1_t, N_t)
-    total_var_std = (safe_math.safe_div(s2_t, N_t) - total_var_mu**2).clip(min=0)
-    total_var_std[N_t < 10] = 0
-    total_var = s0_t * total_var_std
+    total_var_mu = safe_math.safe_div(s1_t, s0_t)
+    total_var_std = (safe_math.safe_div(s2_t, s0_t) - total_var_mu**2).clip(min=0)
+    total_var_std[s0_t < 1] = 0
 
     # 2. Between-Image Variance Score (for splitting)
-    total_T, s1_b, s2_b = stats.between_var_moments.T
     N_b = stats.tet_view_count # Num views
     between_var_mu = safe_math.safe_div(s1_b, N_b)
     between_var_std = (safe_math.safe_div(s2_b, N_b) - between_var_mu**2).clip(min=0)
     between_var_std[N_b < 2] = 0 # Need at least 2 views for variance
-    between_var = total_T * between_var_std # Weighted by summed s0
 
     # 3. Within-Image Variance Score (for splitting)
     within_var = stats.total_within_var_votes[:, 0]
+    within_var = stats.total_ssim# / N_b.clip(min=1)
+
+    between_var = stats.total_T * between_var_std # Weighted by summed s0
+    total_var = stats.total_err * total_var_std
+    # total_var = stats.total_T * safe_math.safe_div(total_var_std, between_var_std).clip(min=0, max=10)
+    total_var[(N_b < 2) | (s0_t < 1)] = 0
     # within_var = stats.total_within_var / stats.tet_view_count.clip(min=1)
     # within_var = safe_math.safe_div(stats.total_within_var, total_T)
     # total_var += within_var
+    vertices = model.vertices
+    circumcenters, _, tet_density, rgb, grd, sh = model.compute_batch_features(vertices, model.indices, 0, model.indices.shape[0])
 
     # --- Masking and target calculation --------------------------------------
-    alphas = model.calc_tet_alpha(mode="max")
-    mask_alive = alphas >= args.clone_min_alpha
+    alphas = model.calc_tet_alpha(mode="max", density=tet_density)
+    # mask_alive = alphas >= args.clone_min_alpha
+    # mask_alive = (alphas >= args.clone_min_alpha) & (stats.peak_contrib >= args.clone_min_density)
+    mask_alive = (alphas >= args.clone_min_alpha) & (tet_density.reshape(-1) >= args.clone_min_density)
     total_var[~mask_alive] = 0
     within_var[~mask_alive] = 0
     between_var[~mask_alive] = 0
+    # total_var = (total_var - between_var).clip(min=0)
 
     target_addition = min(target_addition, stats.tet_view_count.shape[0])
     if target_addition < 0:
@@ -212,9 +243,16 @@ def apply_densification(
 
     # ---------- debug renders -------------------------------------------------
     if args.output_path is not None:
+
+        f = mask_alive.float().unsqueeze(1).expand(-1, 4).clone()
+        color = rgb + 0.5#torch.rand_like(f[:, :3])
+        f[:, :3] = color
+        f[:, 3] *= 2.0    # alpha
+        imageio.imwrite(args.output_path / f"alive_mask{iteration}.png",
+                        render_debug(f, model, sample_cam, 10))
         f = clone_mask.float().unsqueeze(1).expand(-1, 4).clone()
-        f[:, :3] = torch.rand_like(f[:, :3])
-        f[:, 3] *= 1.0    # alpha
+        f[:, :3] = color
+        f[:, 3] *= 2.0    # alpha
         imageio.imwrite(args.output_path / f"densify{iteration}.png",
                         render_debug(f, model, sample_cam, 10))
         imageio.imwrite(args.output_path / f"total_var{iteration}.png",
@@ -237,6 +275,7 @@ def apply_densification(
         stats.tet_moments[:, :3],
         stats.tet_moments[:, 3:4]
     )
+    split_point[bad] = grow_point[bad]
     split_point = split_point[clone_mask]
     bad = bad[clone_mask]
     barycentric = torch.rand((clone_indices.shape[0], clone_indices.shape[1], 1), device=device).clip(min=0.01, max=0.99)

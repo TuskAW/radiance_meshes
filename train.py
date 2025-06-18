@@ -140,7 +140,7 @@ args.percent_total = 1.0
 args.diff_threshold = 0.0
 args.midpoint = 2000
 args.clone_min_alpha = 0.05
-args.clone_min_density = 0.01
+args.clone_min_density = 100.0
 
 args.lambda_ssim = 0.2
 args.base_min_t = 0.2
