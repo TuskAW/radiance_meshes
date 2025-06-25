@@ -19,6 +19,7 @@ from utils import cam_util
 from utils.train_util import *
 # from models.vertex_color import Model, TetOptimizer
 from models.ingp_color import Model, TetOptimizer
+# from models.ingp_linear import Model, TetOptimizer
 from models.frozen import freeze_model
 from fused_ssim import fused_ssim
 from pathlib import Path, PosixPath
@@ -97,6 +98,7 @@ args.k_samples = 1
 args.trunc_sigma = 0.3
 args.percent_alpha = 0.02
 
+args.dg_init=1e-4
 args.g_init=1.0
 args.s_init=1e-4
 args.d_init=0.1
@@ -138,7 +140,6 @@ args.speed_mul = 10
 args.percent_within = 0.99
 args.percent_total = 0.01
 args.diff_threshold = 0.0
-args.midpoint = 1000
 args.clone_min_alpha = 0.1
 args.clone_min_density = 0.1
 
@@ -251,7 +252,6 @@ def densify_schedule(start: int,
 #                             N,
 #                             mode="linear")
 dschedule = list(range(args.densify_start, args.densify_end, args.densify_interval))
-dschedule = list(range(args.densify_start, args.midpoint, 50)) + list(range(args.midpoint, args.densify_end, args.densify_interval))
 targets = [target_num((i - args.densify_start) / num_densify_iter * N+1) for i in dschedule]
 fig = tpl.figure()
 fig.plot(dschedule, targets, width=100, height=20)

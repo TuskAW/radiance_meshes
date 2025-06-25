@@ -63,60 +63,6 @@ class BaseModel(nn.Module):
     def __len__(self):
         return self.vertices.shape[0]
 
-    @torch.no_grad
-    def save2ply(self, path):
-        path.parent.mkdir(exist_ok=True, parents=True)
-
-        xyz = self.vertices.detach().cpu().numpy().astype(np.float32)  # shape (num_vertices, 3)
-
-        vertex_dict = {
-            "x": xyz[:, 0],
-            "y": xyz[:, 1],
-            "z": xyz[:, 2],
-        }
-
-        N = self.indices.shape[0]
-        densities = np.zeros((N), dtype=np.float32)
-        grds = np.zeros((N, 3), dtype=np.float32)
-        sh_dim = ((self.max_sh_deg+1)**2-1)
-        sh_coeffs = np.zeros((N, sh_dim, 3), dtype=np.float32)
-
-        vertices = self.vertices
-        indices = self.indices
-        circumcenters, _, density, rgb, grd, sh = self.compute_batch_features(vertices, indices, 0, indices.shape[0])
-        tets = vertices[indices]
-        base_color_v0_raw, normed_grd = offset_normalize(rgb, grd, circumcenters, tets)
-        base_color_v0_raw = base_color_v0_raw.cpu().numpy().astype(np.float32)
-        normed_grd = normed_grd.cpu().numpy().astype(np.float32)
-        density = density.cpu().numpy().astype(np.float32)
-        sh_coeff = sh.reshape(-1, sh_dim, 3)
-        sh_coeffs = sh_coeff.cpu().numpy()
-        grds = normed_grd.reshape(-1, 3)
-        densities = density.reshape(-1)
-
-        tetra_dict = {}
-        tetra_dict["vertex_indices"] = self.indices.cpu().numpy().astype(np.int32)
-        tetra_dict["s"] = np.ascontiguousarray(densities)
-        for i, co in enumerate(["x", "y", "z"]):
-            tetra_dict[f"grd_{co}"] = np.ascontiguousarray(grds[:, i])
-
-        sh_0 = RGB2SH(base_color_v0_raw)
-        tetra_dict[f"sh_0_r"] = np.ascontiguousarray(sh_0[:, 0])
-        tetra_dict[f"sh_0_g"] = np.ascontiguousarray(sh_0[:, 1])
-        tetra_dict[f"sh_0_b"] = np.ascontiguousarray(sh_0[:, 2])
-        for i in range(sh_coeffs.shape[1]):
-            tetra_dict[f"sh_{i+1}_r"] = np.ascontiguousarray(sh_coeffs[:, i, 0])
-            tetra_dict[f"sh_{i+1}_g"] = np.ascontiguousarray(sh_coeffs[:, i, 1])
-            tetra_dict[f"sh_{i+1}_b"] = np.ascontiguousarray(sh_coeffs[:, i, 2])
-
-
-        data_dict = {
-            "vertex": vertex_dict,
-            "tetrahedron": tetra_dict,
-        }
-
-        tinyplypy.write_ply(str(path), data_dict, is_binary=True)
-
     @property
     def num_int_verts(self):
         return self.contracted_vertices.shape[0]

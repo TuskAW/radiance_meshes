@@ -55,10 +55,9 @@ class TetrahedraRenderingTest(parameterized.TestCase):
 
 
     @parameterized.product(
-        # tile_size=[4, 8, 16],
         radius=[0.05, 0.1, 0.2, 0.4],
     )
-    def test_center_view(self, tile_size=8, N=20, radius=100):
+    def test_center_view(self, tile_size=16, N=20, radius=100):
         """Test rendering from random center with random rotation."""
         for i in range(N):
             vertices = self._create_base_tetrahedra(radius)
@@ -137,10 +136,9 @@ class TetrahedraRenderingTest(parameterized.TestCase):
 
     @parameterized.product(
         offset_mag=[0, 0.1, 1, 5, 10],#, 100, 1000],
-        # tile_size=[4, 8, 16],
         radius=[0.05, 0.1, 0.2, 0.4],
     )
-    def test_face_view(self, offset_mag, tile_size=8, width=32, height=32, radius=100, N=5):
+    def test_face_view(self, offset_mag, tile_size=16, width=32, height=32, radius=100, N=5):
         """Test rendering from face with inward-pointing rotation."""
         for i in range(N):
             vertices = self._create_base_tetrahedra(radius)
@@ -184,9 +182,8 @@ class TetrahedraRenderingTest(parameterized.TestCase):
     @parameterized.product(
         depth=[0, 1, 5, 10],
         origin_radius=[1],
-        # tile_size=[4, 8, 16],
     )
-    def test_frustum_point(self, depth, origin_radius, tile_size=8, radius=1, N=5):
+    def test_frustum_point(self, depth, origin_radius, tile_size=16, radius=1, N=5):
         """Test rendering tetrahedra positioned in view frustum."""
         for i in range(N):
             vertices = self._create_base_tetrahedra(radius)

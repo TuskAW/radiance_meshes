@@ -31,7 +31,7 @@ def render_constant_color(indices, vertices,
         min_t=min_t,
         **camera.to_dict(device)
     )
-    sorted_tetra_idx, tile_ranges, vs_tetra, circumcenter, mask, _, tet_area = vertex_and_tile_shader(
+    sorted_tetra_idx, tile_ranges, vs_tetra, circumcenter, mask, _ = vertex_and_tile_shader(
         indices,
         vertices,
         tcam,
@@ -76,7 +76,6 @@ def render_constant_color(indices, vertices,
         'circumcenters': circumcenter,
         'rgbs': rgbs,
         'mask': mask,
-        'tet_area': tet_area,
     }
 
     return render_pkg

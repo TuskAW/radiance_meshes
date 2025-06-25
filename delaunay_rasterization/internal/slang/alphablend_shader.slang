@@ -14,6 +14,7 @@
 
 
 import utils;
+import camera;
 import safe_math;
 
 static const uint TILE_HEIGHT = PYTHON_TILE_HEIGHT;

@@ -52,7 +52,7 @@ def render_err(gt_image, camera: Camera, model, tile_size=16,
         **camera.to_dict(device)
     )
     st = time.time()
-    sorted_tetra_idx, tile_ranges, vs_tetra, circumcenter, mask, _, tet_area = vertex_and_tile_shader(
+    sorted_tetra_idx, tile_ranges, vs_tetra, circumcenter, mask, _ = vertex_and_tile_shader(
         indices, vertices, tcam, render_grid)
    
     # torch.cuda.synchronize()
@@ -62,7 +62,7 @@ def render_err(gt_image, camera: Camera, model, tile_size=16,
         vs_tetra.retain_grad()
     except:
         pass
-    cell_values = torch.zeros((mask.shape[0], 7), device=circumcenter.device)
+    cell_values = torch.zeros((mask.shape[0], model.feature_dim), device=circumcenter.device)
     vertex_color, cell_values[mask] = model.get_cell_values(camera, mask)
     # vertex_color, cell_values = model.get_cell_values(camera)
 
@@ -81,15 +81,16 @@ def render_err(gt_image, camera: Camera, model, tile_size=16,
     tet_alive = torch.zeros((indices.shape[0]), dtype=bool, device=device)
     ray_jitter = 0.5*torch.ones((camera.image_height, camera.image_width, 2), device=device)
 
-    assert (render_grid.tile_height, render_grid.tile_width) in slang_modules.alpha_blend_shaders_interp, (
+    mod = slang_modules.alpha_blend_shaders_linear if model.linear else slang_modules.alpha_blend_shaders_interp
+    assert (render_grid.tile_height, render_grid.tile_width) in mod, (
         'Alpha Blend Shader was not compiled for this tile'
         f' {render_grid.tile_height}x{render_grid.tile_width} configuration, available configurations:'
-        f' {slang_modules.alpha_blend_shaders_interp.keys()}'
+        f' {mod.keys()}'
     )
 
-    alpha_blend_tile_shader = slang_modules.alpha_blend_shaders_interp[(render_grid.tile_height, render_grid.tile_width)]
+    shader = mod[(render_grid.tile_height, render_grid.tile_width)]
     st = time.time()
-    splat_kernel_with_args = alpha_blend_tile_shader.splat_tiled(
+    splat_kernel_with_args = shader.splat_tiled(
         sorted_gauss_idx=sorted_tetra_idx,
         tile_ranges=tile_ranges,
         indices=indices,
@@ -124,7 +125,8 @@ def render_err(gt_image, camera: Camera, model, tile_size=16,
     debug_img = torch.zeros((render_grid.image_height, 
                                 render_grid.image_width, 4), 
                                 device=device)
-    alpha_blend_tile_shader.calc_tet_err(
+
+    shader.calc_tet_err(
         sorted_gauss_idx=sorted_tetra_idx,
         tile_ranges=tile_ranges,
         indices=indices,
@@ -148,7 +150,6 @@ def render_err(gt_image, camera: Camera, model, tile_size=16,
 
     torch.cuda.synchronize()
     return tet_err, dict(
-        tet_area = tet_area,
         tet_count = tet_count,
         pixel_err = pixel_err,
         ssim_err = ssim_err,

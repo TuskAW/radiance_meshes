@@ -59,6 +59,7 @@ def load_cameras(cam_infos, resolution_scale, resolution, data_device):
 
     for id, c in enumerate(cam_infos):
         camera_list.append(load_cam(data_device, resolution, id, c, resolution_scale))
+    print(cam_infos[0])
 
     return camera_list
 

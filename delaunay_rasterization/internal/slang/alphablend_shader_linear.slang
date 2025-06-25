@@ -16,12 +16,12 @@ import random;
 import utils;
 import camera;
 import safe_math;
-import interp_version;
+import linear_version;
 
 static const uint TILE_HEIGHT = PYTHON_TILE_HEIGHT;
 static const uint TILE_WIDTH = PYTHON_TILE_WIDTH;
 
-groupshared SplatTetrahedra_interp collected_splats[TILE_HEIGHT * TILE_WIDTH];
+groupshared SplatTetrahedraLinear collected_splats[TILE_HEIGHT * TILE_WIDTH];
 groupshared uint32_t collected_idx[TILE_HEIGHT * TILE_WIDTH];
 
 struct DistortionState5 : IDifferentiable {
@@ -48,38 +48,6 @@ float tukey_power_ladder(float x, float p) {
 float safe_exp4alpha(float x) {
     return safe_clip(safe_exp(x), 0, 1);
 }
-
-// [Differentiable]
-// float moment_0_int(float a, float b, float s1, float T) {
-//     return T * safe_div((-safe_expm1(s1*(a - b))),s1);
-// }
-// [Differentiable]
-// float moment_1_int(float a, float b, float s1, float T) {
-//     float s12 = s1*s1;
-//     if (s12 < 1e-6) {
-//         return T * 0.5 * max(b * b - a * a, 0);
-//     } else {
-//         // return (a*s1 - (b*s1 + 1)*safe_exp4alpha(s1*(a - b)) + 1) / (s1*s1);
-//         return T * max(
-//             - safe_div(safe_expm1(s1*(a - b)), s12)
-//             + safe_div(a - b*safe_exp(s1*(a - b)), s1), 0);
-//     }
-// }
-// [Differentiable]
-// float self_dist(float a, float b, float s, float T) {
-//     float dt = (a - b);
-//     float ds = s * dt;
-//     float s3 = s*s*s;
-//     if (abs(ds) < 1e-4 || s3 < 1e-5) {
-//         return T * T * max(-1 / 3 * pow(dt, 3), 0);
-//     } else {
-//         return T * T * max(
-//             safe_div(
-//                 ( 2 * s * (a - b) * exp(ds) - safe_expm1(2 * ds)),
-//                 s3),
-//             0);
-//     }
-// }
 
 [Differentiable]
 float moment_0_int(float a, float b, float s1, float T) {
@@ -245,9 +213,9 @@ AlphaOut alpha_blend(TensorView<int32_t> sorted_gauss_idx,
             for (int j = 0; j < min(block_size, splats_left_to_process); j++)
             {
                 local_n_contrib++;
-                SplatTetrahedra_interp g = collected_splats[j];
+                SplatTetrahedraLinear g = collected_splats[j];
                 CtrlPt tetra_ctrl;
-                if (evaluate_tetra_interp(g, ray.o, ray.d, cam.min_t, tetra_ctrl) && tetra_ctrl.rgba.a > 0) {
+                if (evaluate_tetra_linear(g, ray.o, ray.d, cam.min_t, tetra_ctrl) && tetra_ctrl.rgba.a > 0) {
                     AlphaOut new_ao = update_alpha_out(ao, tetra_ctrl);
                     ao = new_ao;
                     // tet_alive[collected_idx[j]] = true;
@@ -343,10 +311,10 @@ void bwd_alpha_blend(TensorView<int32_t> sorted_gauss_idx,
                 if (current_splat_offset >= n_contrib_fwd || current_splat_offset < 0)
                     continue;
                 uint32_t g_idx = collected_idx[j];
-                SplatTetrahedra_interp g = collected_splats[j];
+                SplatTetrahedraLinear g = collected_splats[j];
 
                 CtrlPt tetra_ctrl;
-                if (evaluate_tetra_interp(g, ray.o, ray.d, cam.min_t, tetra_ctrl) && tetra_ctrl.rgba.a > 0) {
+                if (evaluate_tetra_linear(g, ray.o, ray.d, cam.min_t, tetra_ctrl) && tetra_ctrl.rgba.a > 0) {
                     // CtrlPt tetra_ctrl = evaluate_tetra_2D(g, cam, min_t, center_pix_coord);
                     // if (tetra_ctrl.rgba.a < 1 / 255.f) {
                     //     printf("Continue\n");
@@ -357,7 +325,7 @@ void bwd_alpha_blend(TensorView<int32_t> sorted_gauss_idx,
                     ao = undo_alpha_out(ao, tetra_ctrl);
 
                     // Back-prop automatically through blending and gaussian evaluation.
-                    DifferentialPair<SplatTetrahedra_interp> dp_g = diffPair(g);
+                    DifferentialPair<SplatTetrahedraLinear> dp_g = diffPair(g);
                     DifferentialPair<float3> dp_ray_o = diffPair(ray.o);
                     DifferentialPair<float3> dp_ray_d = diffPair(ray.d);
                     DifferentialPair<CtrlPt> dp_tetra_ctrl = diffPair(tetra_ctrl);
@@ -373,7 +341,7 @@ void bwd_alpha_blend(TensorView<int32_t> sorted_gauss_idx,
                         grad_scale * dp_tetra_ctrl.d.dist,
                         grad_scale * dp_tetra_ctrl.d.density,
                     };
-                    bwd_diff(evaluate_tetra_interp)(dp_g, dp_ray_o, dp_ray_d, cam.min_t, d_tetra_scale);
+                    bwd_diff(evaluate_tetra_linear)(dp_g, dp_ray_o, dp_ray_d, cam.min_t, d_tetra_scale);
                     // bwd_diff(evaluate_tetra_2D)(dp_g, cam, min_t, dp_center_pix_coord, dp_tetra_ctrl.d);
                     bwd_diff(load_tet_alphablend_interp)(g_idx, vertices, indices, tet_density, dp_g.d);
 
@@ -519,10 +487,10 @@ VarInfo kern_calc_tet_err(TensorView<int32_t> sorted_gauss_idx,
             for (int j = 0; j < min(block_size, splats_left_to_process); j++)
             {
                 local_n_contrib++;
-                SplatTetrahedra_interp g = collected_splats[j];
+                SplatTetrahedraLinear g = collected_splats[j];
                 uint32_t g_idx = collected_idx[j];
                 CtrlPt tetra_ctrl;
-                if (evaluate_tetra_interp(g, ray.o, ray.d, cam.min_t, tetra_ctrl)) {
+                if (evaluate_tetra_linear(g, ray.o, ray.d, cam.min_t, tetra_ctrl)) {
                     //if (tetra_ctrl.rgba.a < 1/255.f) continue;
                     AlphaOut new_ao = update_alpha_out(ao, tetra_ctrl);
 
@@ -557,8 +525,8 @@ VarInfo kern_calc_tet_err(TensorView<int32_t> sorted_gauss_idx,
                     tet_err.InterlockedAdd(uint2(g_idx, 11), w * p2.z, old_val);
                     tet_err.InterlockedAdd(uint2(g_idx, 12), w, old_val);
 
-                    float3 centroid = 0.5*(tetra_ctrl.dist.x+tetra_ctrl.dist.y) * ray.d + ray.o;
-                    // float3 centroid = tetra_ctrl.dist.y * ray.d + ray.o;
+                    //float3 centroid = 0.5*(tetra_ctrl.dist.x+tetra_ctrl.dist.y) * ray.d + ray.o;
+                    float3 centroid = tetra_ctrl.dist.y * ray.d + ray.o;
                     tet_err.InterlockedAdd(uint2(g_idx, 13), w * centroid.x, old_val);
                     tet_err.InterlockedAdd(uint2(g_idx, 14), w * centroid.y, old_val);
                     tet_err.InterlockedAdd(uint2(g_idx, 15), w * centroid.z, old_val);

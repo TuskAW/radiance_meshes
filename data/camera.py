@@ -41,7 +41,7 @@ class Camera(nn.Module):
         self.cy = cy
         self.image_name = image_name
         self.model = model
-        self.distortion_params = distortion_params if distortion_params is not None else torch.zeros((8))
+        self.distortion_params = torch.as_tensor(distortion_params).float().clone() if distortion_params is not None else torch.zeros((4))
         self.glo_vector = None
         self.exposure = exposure
         self.iso = iso

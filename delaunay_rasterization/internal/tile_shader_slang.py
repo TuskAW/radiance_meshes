@@ -26,7 +26,7 @@ def vertex_and_tile_shader(indices,
                            cam,
                            render_grid):
     n_tetra = indices.shape[0]
-    tiles_touched, rect_tile_space, vs_tetra, circumcenter, tet_area = VertexShader.apply(
+    tiles_touched, rect_tile_space, vs_tetra, circumcenter = VertexShader.apply(
         indices, 
         vertices,
         cam,
@@ -69,7 +69,7 @@ def vertex_and_tile_shader(indices,
             )
 
     mask = tiles_touched > 0
-    return sorted_tetra_idx, tile_ranges, vs_tetra, circumcenter, mask, rect_tile_space, tet_area
+    return sorted_tetra_idx, tile_ranges, vs_tetra, circumcenter, mask, rect_tile_space
 
 
 class VertexShader(torch.autograd.Function):
@@ -83,9 +83,6 @@ class VertexShader(torch.autograd.Function):
         rect_tile_space = torch.zeros((n_tetra, 4), 
                                       device="cuda", 
                                       dtype=torch.int32)
-        tet_area = torch.ones((n_tetra), 
-                                device="cuda", 
-                                dtype=torch.float)
         
         vs_tetra = torch.zeros((n_tetra, 3),
                                device="cuda",
@@ -96,7 +93,6 @@ class VertexShader(torch.autograd.Function):
         
         slang_modules.vertex_shader.vertex_shader(indices=indices,
                                                   vertices=vertices,
-                                                  out_tet_area=tet_area,
                                                   out_tiles_touched=tiles_touched,
                                                   out_rect_tile_space=rect_tile_space,
                                                   out_vs=vs_tetra,
@@ -116,7 +112,7 @@ class VertexShader(torch.autograd.Function):
 
         tensors = [
             indices, vertices,
-            tiles_touched, rect_tile_space, vs_tetra, circumcenter, tet_area
+            tiles_touched, rect_tile_space, vs_tetra, circumcenter
         ]
         non_tensor_data, tensor_data = split_tensors(tcam)
         ctx.non_tensor_data = non_tensor_data
@@ -124,12 +120,12 @@ class VertexShader(torch.autograd.Function):
         ctx.save_for_backward(*tensors, *tensor_data)
         ctx.render_grid = render_grid
 
-        return tiles_touched, rect_tile_space, vs_tetra, circumcenter, tet_area
+        return tiles_touched, rect_tile_space, vs_tetra, circumcenter
     
     @staticmethod
-    def backward(ctx, grad_tiles_touched, grad_rect_tile_space, grad_vs_tetra, grad_circumcenter, grad_tet_area):
+    def backward(ctx, grad_tiles_touched, grad_rect_tile_space, grad_vs_tetra, grad_circumcenter):
         (indices, vertices,
-            tiles_touched, rect_tile_space, vs_tetra, circumcenter, tet_area) = ctx.saved_tensors[:ctx.len_tensors]
+            tiles_touched, rect_tile_space, vs_tetra, circumcenter) = ctx.saved_tensors[:ctx.len_tensors]
         tcam = recombine_tensors(ctx.non_tensor_data, ctx.saved_tensors[ctx.len_tensors:])
         render_grid = ctx.render_grid
 
@@ -141,7 +137,6 @@ class VertexShader(torch.autograd.Function):
         slang_modules.vertex_shader.vertex_shader.bwd(indices=indices,
                                                       vertices=(vertices, grad_vertices),
                                                       tcam=tcam,
-                                                      out_tet_area=tet_area,
                                                       out_tiles_touched=tiles_touched,
                                                       out_rect_tile_space=rect_tile_space,
                                                       out_vs=(vs_tetra, grad_vs_tetra),

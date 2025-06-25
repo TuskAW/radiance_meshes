@@ -4,9 +4,8 @@ import safe_math;
 import utils;
 import spherical_harmonics;
 import intersect;
-import minkowski;
-import tet_area;
 import stable_power;
+import camera;
 
 struct rectangle {
     int32_t min_x;
@@ -84,52 +83,6 @@ float get_max_alpha(float z, uint4 virtual_tet, TensorView<float> densities) {
     return max_alpha;
 }
 
-int32_t count_tiles(Tetrahedra tet, Camera cam, rectangle rect_tile_space, int32_t tile_width, int32_t tile_height) {
-    float2 points2d[4];
-    points2d[0] = point2image(tet.verts[0], cam);
-    points2d[1] = point2image(tet.verts[1], cam);
-    points2d[2] = point2image(tet.verts[2], cam);
-    points2d[3] = point2image(tet.verts[3], cam);
-    Triangle2D tris[4];
-    // float m = 1.1*sqrt(2);
-    float m = 0.6;
-    tris[0] = grow_triangle({points2d[0], points2d[1], points2d[2]}, m*(float)max(tile_height, tile_width));
-    tris[1] = grow_triangle({points2d[0], points2d[1], points2d[3]}, m*(float)max(tile_height, tile_width));
-    tris[2] = grow_triangle({points2d[0], points2d[2], points2d[3]}, m*(float)max(tile_height, tile_width));
-    tris[3] = grow_triangle( { points2d[1], points2d[2], points2d[3] }, m * (float)max(tile_height, tile_width));
-    // Polygon2D poly[4];
-    // poly[0] = grow_triangle_linf({points2d[0], points2d[1], points2d[2]}, m*(float)max(tile_height, tile_width));
-    // poly[1] = grow_triangle_linf({points2d[0], points2d[1], points2d[3]}, m*(float)max(tile_height, tile_width));
-    // poly[2] = grow_triangle_linf({points2d[0], points2d[2], points2d[3]}, m*(float)max(tile_height, tile_width));
-    // poly[3] = grow_triangle_linf({ points2d[1], points2d[2], points2d[3]}, m * (float)max(tile_height, tile_width));
-
-    int32_t n_tiles_refine = 0;
-    for (int y = rect_tile_space.min_y; y <= rect_tile_space.max_y; y++) {
-        for (int x = rect_tile_space.min_x; x <= rect_tile_space.max_x; x++) {
-            float2 pixel_center = {(x + 0.5f)*tile_width, (y + 0.5f)*tile_height};
-            // for (int i = 0; i < 4; i++) {
-            //     if (is_point_inside_triangle(pixel_center, tris[i])) {
-            //         n_tiles_refine++;
-            //         break;
-            //     }
-            // }
-            bool contained = false;
-            for (int i = 0; i < 4; i++) {
-                if (is_point_inside_triangle(pixel_center, tris[i])) {
-                // if (in_polygon(pixel_center, poly[i])) {
-                    contained = true;
-                    break;
-                }
-            }
-            if (!contained) continue;
-            n_tiles_refine++;
-        }
-    }
-    // int32_t n_tiles = (rect_tile_space.max_x - rect_tile_space.min_x) * (rect_tile_space.max_y - rect_tile_space.min_y);
-    // printf("Refined from %i->%i,", n_tiles, n_tiles_refine);
-    return n_tiles_refine;
-}
-
 void print_vec(float3 vec) {
     printf("(%f, %f, %f),", vec.x, vec.y, vec.z);
 }
@@ -141,7 +94,6 @@ void print_vec(float3 vec) {
 void vertex_shader(TensorView<int32_t> indices,
                    DiffTensorView vertices,
                    TensorCamera tcam,
-                   TensorView<float> out_tet_area,
                    TensorView<int32_t> out_tiles_touched,
                    TensorView<int32_t> out_rect_tile_space,
                    DiffTensorView out_vs,
@@ -173,7 +125,7 @@ void vertex_shader(TensorView<int32_t> indices,
     // print_vec(camspace_tet.verts[2]);
     // print_vec(camspace_tet.verts[3]);
     no_diff float3 minv, maxv;
-    no_diff find_extent(camspace_tet, minv, maxv, cam);
+    no_diff find_extent2(camspace_tet, minv, maxv, cam);
     // no_diff float max_alpha = get_max_alpha(maxv.z - minv.z, virtual_tet, densities);
     // printf("(%f, %f, %f) - (%f, %f, %f)\n", minv.x, minv.y, minv.z, maxv.x, maxv.y, maxv.z);
 
@@ -218,22 +170,14 @@ void vertex_shader(TensorView<int32_t> indices,
         return;
     }
 
-    // if (contains_ray_origin) {
-    //     out_tiles_touched[g_idx] = n_tiles;
-    // } else {
-    //     out_tiles_touched[g_idx] = count_tiles(tet, cam, rect_tile_space, cam.tile_width, cam.tile_height);
-    // }
     Ray center_ray = get_ray(cam, { cam.W / 2, cam.H / 2 });
     Tetrahedra image_tet = camspace_tet2image_w_depth(camspace_tet, cam);
-    float area = tet_area(image_tet, center_ray.d, cam);
 
     // float3 circumcenter = calculate_circumcenter(tet);
     // float radius = length(circumcenter - tet.verts[0]);
     // float circum_dist = length(circumcenter - cam.position);
     // float sort_depth = circum_dist * circum_dist - radius * radius;
 
-
-    out_tet_area[g_idx] = area;
 
     out_tiles_touched[g_idx] = n_tiles;
     out_rect_tile_space[uint2(g_idx, 0)] = rect_tile_space.min_x;

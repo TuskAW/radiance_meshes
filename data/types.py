@@ -30,7 +30,7 @@ class CameraInfo(NamedTuple):
     width: int
     height: int
     model: ProjectionType
-    distortion_params: Optional[dict]
+    distortion_params: np.array
     exposure: float
     iso: float
     aperature: float

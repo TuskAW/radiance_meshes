@@ -26,7 +26,7 @@ import open3d as o3d
 from data.types import BasicPointCloud
 from simple_knn._C import distCUDA2
 from utils import mesh_util
-from utils.model_util import *
+from utils.lmodel_util import *
 from models.base_model import BaseModel
 
 torch.set_float32_matmul_precision('high')
@@ -53,13 +53,13 @@ class Model(BaseModel):
             [math.pi, 0],
         ], device=self.device)
         sh_dim = ((1+max_sh_deg)**2-1)*3
-        self.backbone = torch.compile(iNGPDW(sh_dim, **kwargs)).to(self.device)
+        self.backbone = torch.compile(iNGPDWL(sh_dim, **kwargs)).to(self.device)
         self.chunk_size = 408576
         self.mask_values = True
         self.frozen = False
         self.alpha = 0
-        self.linear = False
-        self.feature_dim = 7
+        self.linear = True
+        self.feature_dim = 10
 
         self.register_buffer('ext_vertices', ext_vertices.to(self.device))
         self.register_buffer('center', center.reshape(1, 3))
@@ -97,10 +97,10 @@ class Model(BaseModel):
         start = 0
         for start in range(0, indices.shape[0], self.chunk_size):
             end = min(start + self.chunk_size, indices.shape[0])
-            circumcenters, normalized, density, rgb, grd, sh = self.compute_batch_features(
+            circumcenters, normalized, base_density, rgb, grd, d_grd, sh = self.compute_batch_features(
                 vertices, indices, start, end, circumcenters=all_circumcenters)
             dvrgbs = activate_output(camera.camera_center.to(self.device),
-                                     density, rgb, grd, sh, indices[start:end],
+                                     rgb, grd, base_density, d_grd, sh, indices[start:end],
                                      circumcenters,
                                      vertices, self.current_sh_deg, self.max_sh_deg)
             normed_cc.append(normalized)
@@ -202,8 +202,8 @@ class Model(BaseModel):
         verts = self.vertices
         for start in range(0, self.indices.shape[0], self.chunk_size):
             end = min(start + self.chunk_size, self.indices.shape[0])
-            
-            _, _, density, _, _, _ = self.compute_batch_features(verts, self.indices, start, end)
+            bf = self.compute_batch_features(verts, self.indices, start, end)
+            density = bf[2]
 
             densities.append(density.reshape(-1))
         return torch.cat(densities)
@@ -211,28 +211,32 @@ class Model(BaseModel):
     def compute_features(self, offset=False):
         vertices = self.vertices
         indices = self.indices
-        cs, ds, rs, gs, ss = [], [], [], [], []
+        cs, ds, rs, gs, ss, dgs = [], [], [], [], [], []
         for start in range(0, indices.shape[0], self.chunk_size):
             end = min(start + self.chunk_size, indices.shape[0])
 
-            circumcenters, _, density, rgb, grd, sh = self.compute_batch_features(vertices, indices, start, end)
+            circumcenters, _, density, rgb, grd, d_grd, sh = self.compute_batch_features(vertices, indices, start, end)
             tets = vertices[indices[start:end]]
             cs.append(circumcenters)
             ds.append(density)
             ss.append(sh)
             if offset:
-                base_color_v0_raw, normed_grd = offset_normalize(rgb, grd, circumcenters, tets)
+                base_color_v0_raw, normed_grd = offset_normalize(
+                    rgb, grd, density, d_grd, circumcenters, tets)
                 rs.append(base_color_v0_raw)
                 gs.append(normed_grd)
+                dgs.append(d_grd)
             else:
                 rs.append(rgb)
                 gs.append(grd)
+                dgs.append(d_grd)
         cs = torch.cat(cs, dim=0)
         ds = torch.cat(ds, dim=0)
         rs = torch.cat(rs, dim=0)
         gs = torch.cat(gs, dim=0)
         ss = torch.cat(ss, dim=0)
-        return cs, ds, rs, gs, ss
+        dgs = torch.cat(dgs, dim=0)
+        return cs, ds, rs, gs, ss, dgs
 
     def inv_contract(self, points):
         return inv_contract_points(points) * self.scene_scaling + self.center
@@ -326,6 +330,7 @@ class TetOptimizer:
             {"params": model.backbone.density_net.parameters(),   "lr": density_lr,  "name": "density"},
             {"params": model.backbone.color_net.parameters(),     "lr": color_lr,    "name": "color"},
             {"params": model.backbone.gradient_net.parameters(),  "lr": gradient_lr, "name": "gradient"},
+            {"params": model.backbone.d_gradient_net.parameters(),  "lr": gradient_lr, "name": "d_gradient"},
             {"params": model.backbone.sh_net.parameters(),        "lr": sh_lr,       "name": "sh"},
         ], ignore_param_list=[], betas=[0.9, 0.99])
         self.ratios = dict(
@@ -333,6 +338,7 @@ class TetOptimizer:
             density = density_lr / network_lr,
             color = color_lr / network_lr,
             gradient = gradient_lr / network_lr,
+            d_gradient = gradient_lr / network_lr,
             sh = sh_lr / network_lr,
         )
         self.vert_lr_multi = 1 if model.contract_vertices else float(model.scene_scaling.cpu())
@@ -514,3 +520,4 @@ class TetOptimizer:
         keep_mask = vert_diff > diff_threshold
         print(f"Pruned {(~keep_mask).sum()} points. VD: {vert_diff.mean()} TD: {tet_diff.mean()}")
         self.remove_points(keep_mask)
+

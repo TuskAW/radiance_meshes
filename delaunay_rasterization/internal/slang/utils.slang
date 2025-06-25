@@ -20,92 +20,10 @@ static const float FLT_MAX = 1e20;
 static const float FLT_MIN = -1e20;
 static const float eps = 1e-7;
 
-struct Ray : IDifferentiable
-{
-    float3 o, d;
-}
-
 struct Triangle2D {
     float2 a, b, c;
 }
 
-struct TensorCamera {
-     int grid_height;
-     int grid_width;
-
-     int image_height;
-     int image_width;
-     int camera_type;
-     TensorView<float> world_view_transform;
-     TensorView<float> K;
-     TensorView<float> cam_pos;
-     TensorView<float> distortion_params;
-     no_diff float min_t;
-     no_diff float fovy;
-     no_diff float fovx;
-     int tile_height;
-     int tile_width;
-}
-
-struct Camera : IDifferentiable
-{
-    float4x4 world_view_transform;
-    float4x4 proj_mat;
-    float3x3 K;
-    float3 position;
-    float fovy;
-    float fovx;
-    int H;
-    int W;
-    int grid_height;
-    int grid_width;
-    int tile_height;
-    int tile_width;
-    no_diff float min_t;
-    int camera_type;
-    float4 distortion_params;
-}
-
-Camera load_tensor_camera(TensorCamera cam) {
-    float4x4 world_view_transform = float4x4(cam.world_view_transform[uint2(0, 0)], cam.world_view_transform[uint2(0, 1)], cam.world_view_transform[uint2(0, 2)], cam.world_view_transform[uint2(0, 3)],
-                                             cam.world_view_transform[uint2(1, 0)], cam.world_view_transform[uint2(1, 1)], cam.world_view_transform[uint2(1, 2)], cam.world_view_transform[uint2(1, 3)],
-                                             cam.world_view_transform[uint2(2, 0)], cam.world_view_transform[uint2(2, 1)], cam.world_view_transform[uint2(2, 2)], cam.world_view_transform[uint2(2, 3)],
-                                             cam.world_view_transform[uint2(3, 0)], cam.world_view_transform[uint2(3, 1)], cam.world_view_transform[uint2(3, 2)], cam.world_view_transform[uint2(3, 3)]);
-    float3x3 K = float3x3(cam.K[uint2(0, 0)], cam.K[uint2(0, 1)], cam.K[uint2(0, 2)],
-                          cam.K[uint2(1, 0)], cam.K[uint2(1, 1)], cam.K[uint2(1, 2)],
-                          cam.K[uint2(2, 0)], cam.K[uint2(2, 1)], cam.K[uint2(2, 2)]);
-    float3 position = float3(cam.cam_pos[0], cam.cam_pos[1], cam.cam_pos[2]);
-    float4 distortion_params = float4(cam.distortion_params[0], cam.distortion_params[1], cam.distortion_params[2], cam.distortion_params[3]);
-    float4x4 proj_mat = float4x4(1.0);
-    return { world_view_transform,
-             proj_mat,
-             K,
-             position,
-             cam.fovy,
-             cam.fovx,
-             cam.image_height,
-             cam.image_width,
-             cam.grid_height,
-             cam.grid_width,
-             cam.tile_height,
-             cam.tile_width,
-             cam.min_t,
-             cam.camera_type,
-             distortion_params };
-}
-
-Camera load_camera(TensorView<float> world_view_transform_t, TensorView<float> K_t, TensorView<float> position_t, no_diff float fovy, no_diff float fovx, uint H, uint W) {
-    float4x4 world_view_transform = float4x4(world_view_transform_t[uint2(0, 0)], world_view_transform_t[uint2(0, 1)], world_view_transform_t[uint2(0, 2)], world_view_transform_t[uint2(0, 3)],
-                                             world_view_transform_t[uint2(1, 0)], world_view_transform_t[uint2(1, 1)], world_view_transform_t[uint2(1, 2)], world_view_transform_t[uint2(1, 3)],
-                                             world_view_transform_t[uint2(2, 0)], world_view_transform_t[uint2(2, 1)], world_view_transform_t[uint2(2, 2)], world_view_transform_t[uint2(2, 3)],
-                                             world_view_transform_t[uint2(3, 0)], world_view_transform_t[uint2(3, 1)], world_view_transform_t[uint2(3, 2)], world_view_transform_t[uint2(3, 3)]);
-    float3x3 K = float3x3(K_t[uint2(0, 0)], K_t[uint2(0, 1)], K_t[uint2(0, 2)],
-                          K_t[uint2(1, 0)], K_t[uint2(1, 1)], K_t[uint2(1, 2)],
-                          K_t[uint2(2, 0)], K_t[uint2(2, 1)], K_t[uint2(2, 2)]);
-    float3 position = float3(position_t[0], position_t[1], position_t[2]);
-    float4x4 proj_mat = float4x4(1.0);
-    return { world_view_transform, proj_mat, K, position, fovy, fovx, H, W};
-}
 
 struct SplatTetrahedra : IDifferentiable
 {
@@ -192,17 +110,6 @@ float2x2 read_t2x2_float2x2(uint32_t idx, DiffTensorView t2x2)
                     t2x2[uint3(idx, 1, 1)]);
 }
 
-[Differentiable]
-float ndc2pix(float v, int S)
-{
-	return ((v + 1.0) * S - 1.0) * 0.5;
-}
-
-[Differentiable]
-float pix2ndc(float v, int S)
-{
-    return (2.0 * v + 1.0) / S - 1.0;
-}
 
 float clip(float val, float min_val, float max_val)
 {
@@ -222,74 +129,6 @@ float3 geom_transform_points2(float3 point, float4x4 transf_matrix)
 {
     float4 p_out = mul(transf_matrix, float4(point, 1.0));
     return p_out.xyz;
-}
-
-[Differentiable]
-float3 point2camspace(float3 point, Camera cam) {
-    float4 cam_space_homo = mul(cam.world_view_transform, float4(point, 1.f));
-    float3 cam_space_nohomo = safe_div(cam_space_homo.xyz, cam_space_homo.w);
-    return cam_space_nohomo;
-}
-
-[Differentiable]
-float3 camspace2image_w_depth(float3 cam_space_nohomo, Camera cam) {
-    float3 pix_space = mul(cam.K, float3(safe_div(cam_space_nohomo.xy, abs(cam_space_nohomo.z)), 1.f));
-    pix_space.z = cam_space_nohomo.z;
-    return pix_space;
-}
-
-[Differentiable]
-float2 point2image(float3 point, Camera cam) {
-    float4 cam_space_homo = mul(cam.world_view_transform, float4(point, 1.f));
-    float3 cam_space_nohomo = safe_div(cam_space_homo.xyz, cam_space_homo.w);
-    float3 pix_space = mul(cam.K, float3(safe_div(cam_space_nohomo.xy, abs(cam_space_nohomo.z) + eps), 1.f));
-    return { pix_space.x, pix_space.y };
-}
-
-[Differentiable]
-float3 project_point_w_depth(float3 point, Camera cam) {
-    float4 cam_space_homo = mul(cam.world_view_transform, float4(point, 1.f));
-    float3 cam_space_nohomo = safe_div(cam_space_homo.xyz, cam_space_homo.w);
-    float3 pix_space = mul(cam.K, float3(safe_div(cam_space_homo.xy, abs(cam_space_homo.z)), 1.f));
-
-
-    pix_space.z = cam_space_nohomo.z;
-    return pix_space;
-}
-
-[Differentiable]
-float3x3 compute_jacobian(float3 xyz_ws, Camera cam) {
-    float tan_half_fovx = tan(cam.fovx / 2.0);
-    float tan_half_fovy = tan(cam.fovy / 2.0);
-    float h_x = cam.W / (2.0 * tan_half_fovx);
-    float h_y = cam.H / (2.0 * tan_half_fovy);
-
-    float3 t = geom_transform_points(xyz_ws, cam.world_view_transform);
-
-    // TODO: Clean this up, quite unintuive math and code
-    const float limx = 1.3f * tan_half_fovx;
-    const float limy = 1.3f * tan_half_fovy;
-    const float txtz = t.x / t.z;
-    const float tytz = t.y / t.z;
-    t.x = min(limx, max(-limx, txtz)) * t.z;
-    t.y = min(limy, max(-limy, tytz)) * t.z;
-
-    float3x3 J = float3x3(h_x / t.z, 0.0, -(h_x * t.x) / (t.z * t.z),
-                          0.0, h_y / t.z, -(h_y * t.y) / (t.z * t.z),
-                          0.0, 0.0, 0.0);
-
-    return J;
-}
-
-[Differentiable]
-float2x2 covariance_3d_to_2d(Camera cam, float3 xyz_ws, float3x3 cov_ws) {
-    float3x3 R = (float3x3)cam.world_view_transform;
-    float3x3 J = compute_jacobian(xyz_ws, cam);
-    float3x3 cov_vs = mul(J, mul(R, mul(cov_ws, mul(transpose(R), transpose(J)))));
-    cov_vs[0][0] += 0.3;
-    cov_vs[1][1] += 0.3;
-
-    return float2x2(cov_vs);
 }
 
 uint4 load_virtual_tetrahedra(int32_t g_idx,
@@ -332,151 +171,6 @@ float compute_det(float2x2 M) {
     return M[0][0] * M[1][1] - M[0][1] * M[1][0];
 }
 
-[Differentiable]
-Tetrahedra project_tetrahedra(Tetrahedra tet, Camera cam) {
-    return {
-        {
-            project_point_w_depth(tet.verts[0], cam),
-            project_point_w_depth(tet.verts[1], cam),
-            project_point_w_depth(tet.verts[2], cam),
-            project_point_w_depth(tet.verts[3], cam)
-        }
-    };
-}
-
-[Differentiable]
-Tetrahedra camspace_tet2image_w_depth(Tetrahedra camspace_tet, Camera cam) {
-    return {
-        {
-            camspace2image_w_depth(camspace_tet.verts[0], cam),
-            camspace2image_w_depth(camspace_tet.verts[1], cam),
-            camspace2image_w_depth(camspace_tet.verts[2], cam),
-            camspace2image_w_depth(camspace_tet.verts[3], cam)
-        }
-    };
-}
-
-[Differentiable]
-Tetrahedra tet2camspace(Tetrahedra tet, Camera cam) {
-    return {
-        {
-            point2camspace(tet.verts[0], cam),
-            point2camspace(tet.verts[1], cam),
-            point2camspace(tet.verts[2], cam),
-            point2camspace(tet.verts[3], cam)
-        }
-    };
-}
-
-[Differentiable]
-Tetrahedra tet_ndc2pix(Tetrahedra tet, int image_height, int image_width) {
-    return {{
-        {
-            ndc2pix(tet.verts[0].x, image_width),
-            ndc2pix(tet.verts[0].y, image_height),
-            tet.verts[0].z
-        },
-        {
-            ndc2pix(tet.verts[1].x, image_width),
-            ndc2pix(tet.verts[1].y, image_height),
-            tet.verts[1].z
-        },
-        {
-            ndc2pix(tet.verts[2].x, image_width),
-            ndc2pix(tet.verts[2].y, image_height),
-            tet.verts[2].z
-        },
-        {
-            ndc2pix(tet.verts[3].x, image_width),
-            ndc2pix(tet.verts[3].y, image_height),
-            tet.verts[3].z
-        }
-    }};
-}
-
-// [Differentiable]
-void find_extent(Tetrahedra tet, out float3 minv, out float3 maxv, Camera cam) {
-    minv = float3(FLT_MAX, FLT_MAX, FLT_MAX);
-    maxv = float3(-FLT_MAX, -FLT_MAX, -FLT_MAX);
-
-    float3 minv2 = float3(FLT_MAX, FLT_MAX, FLT_MAX);
-    float3 maxv2 = float3(-FLT_MAX, -FLT_MAX, -FLT_MAX);
-
-    float eps = 1e-3;
-    bool has_front = false;
-    bool has_back = false;
-
-    // First pass: Include vertices clearly in front (z > EPSILON)
-    for (int i = 0; i < 4; i++) {
-        float3 v = tet.verts[i];
-        if (v.z > eps) {
-            has_front = true;
-            float3 pixel_vert = camspace2image_w_depth(v, cam);
-            minv = min(minv, pixel_vert);
-            maxv = max(maxv, pixel_vert);
-        } else if (v.z < -eps) {
-            has_back = true;
-        } else {
-            // Vertex exactly (or nearly) on plane; explicitly include it
-            float3 cv = { v.x, v.y, eps };
-            float3 pixel_vert = camspace2image_w_depth(cv, cam);
-            minv = min(minv, pixel_vert);
-            maxv = max(maxv, pixel_vert);
-            has_front = true; // Treat as front for extent
-            has_back = true;  // Also treat as back for intersection checks
-        }
-    }
-
-    bool straddling = has_front && has_back;
-
-    // printf("straddling: %i\n", straddling);
-
-    if (straddling) {
-        // Adjust bounds if tetrahedron straddles z=0
-        for (int i = 0; i < 4; i++) {
-            float3 vb = tet.verts[i];
-            [MaxIters(4)]
-            for (int j = i + 1; j < 4; j++) {
-                float3 vf = tet.verts[j];
-                float3 temp;
-                if (vb.z > vf.z) {
-                    // swap(vb, vf);
-                    temp = vf;
-                    vf = vb;
-                    vb = temp;
-                }
-                // vb = v back, vf = v front
-                // we are drawing lines along the tetrahedra and intersecting them with z=1e-3
-                if (vf.z > eps && vb.z < eps) {
-
-                    float t = max((eps - vb.z) / (vf.z - vb.z), 0);
-                    float3 v_clip = vb + t * (vf - vb);
-                    v_clip.z = eps;
-                    float3 pixel_v_clip = camspace2image_w_depth(v_clip, cam);
-                    pixel_v_clip.z = vb.z;
-                    // printf("pixel_v_clip: %f, %f, %f\n", v_clip.x, v_clip.y, v_clip.z);
-
-                    // Adjust bounds to include the intersection point
-                    minv = min(minv, pixel_v_clip);
-                    maxv = max(maxv, pixel_v_clip);
-                }
-            }
-        }
-        // float tile_width = 8;
-        // float tile_height = 8;
-        // int32_t grid_width = 80;
-        // int32_t grid_height = 60;
-        // int32_t gw = int32_t(ceil(clip((maxv.x) / tile_width, 0, grid_width))) - int32_t(clip(floor(minv.x / tile_width), 0, grid_width));
-        // int32_t gh = int32_t(floor(clip((maxv.y) / tile_height, 0, grid_height))) - int32_t(ceil(clip((minv.y) / tile_height, 0, grid_height)));
-        // if (gw == 80 && gh == 60) {
-        //     // printf("new: (%f, %f, %f), (%f, %f, %f), full extent: (%f, %f, %f), (%f, %f, %f), (%i, %i)\n",
-        //     //        minv.x, minv.y, minv.z, maxv.x, maxv.y, maxv.z,
-        //     //        minv2.x, minv2.y, minv2.z, maxv2.x, maxv2.y, maxv2.z,
-        //     //        gw, gh);
-        //     printTetrahedra(tet);
-        // }
-    }
-}
 
 [Differentiable]
 float3 SolveLinearSystem(float3x3 A, float3 b)
@@ -642,44 +336,6 @@ float3x3 get_covariance_from_quat_scales(float4 q, float3 s) {
     return mul(L, transpose(L));
 }
 
-[Differentiable]
-float3x3 construct_view_matrix(float4x4 viewmatrix)
-{
-    return float3x3(
-        viewmatrix._11, viewmatrix._21, viewmatrix._31,
-        viewmatrix._12, viewmatrix._22, viewmatrix._32,
-        viewmatrix._13, viewmatrix._23, viewmatrix._33
-    );
-}
-
-// [Differentiable]
-Ray get_ray(Camera cam, float2 center_pix_coord) {
-    float3x3 V = construct_view_matrix(cam.world_view_transform);
-    Ray ray;
-    // Construct pixel ray in camera space
-    float fx = cam.K[0][0];
-    float fy = cam.K[1][1];
-    ray.d = normalize(mul(V, float3(
-        (center_pix_coord.x - cam.K[0][2]) / fx,
-        (center_pix_coord.y - cam.K[1][2]) / fy,
-        1.0
-    )));
-    
-    ray.o = cam.position + ray.d * cam.min_t;
-    return ray;
-}
-
-[Differentiable]
-float depth2distance(Camera cam, float2 center_pix_coord, float depth) {
-    float fx = cam.K[0][0];
-    float fy = cam.K[1][1];
-    return depth * length(float3(
-    // ray.d = normalize(float3(
-        (center_pix_coord.x - cam.K[0][2]) / fx,
-        (center_pix_coord.y - cam.K[1][2]) / fy,
-        1.0
-    ));
-}
 
 bool is_point_inside_triangle(float2 p, Triangle2D tri) {
     // Compute barycentric coordinates

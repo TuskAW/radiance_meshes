@@ -195,14 +195,14 @@ def apply_densification(
     # circumcenters, _, tet_density, rgb, grd, sh = model.compute_batch_features(vertices, model.indices, 0, model.indices.shape[0])
 
     # --- Masking and target calculation --------------------------------------
-    tet_density = model.calc_tet_density()
-    alphas = model.calc_tet_alpha(mode="max", density=tet_density)
+    # tet_density = model.calc_tet_density()
+    # alphas = model.calc_tet_alpha(mode="max", density=tet_density)
     # mask_alive = alphas >= args.clone_min_alpha
     # mask_alive = (alphas >= args.clone_min_alpha) & (stats.peak_contrib >= args.clone_min_density)
-    mask_alive = (alphas >= args.clone_min_alpha) & (tet_density.reshape(-1) >= args.clone_min_density)
-    total_var[~mask_alive] = 0
-    within_var[~mask_alive] = 0
-    between_var[~mask_alive] = 0
+    # mask_alive = (alphas >= args.clone_min_alpha) & (tet_density.reshape(-1) >= args.clone_min_density)
+    # total_var[~mask_alive] = 0
+    # within_var[~mask_alive] = 0
+    # between_var[~mask_alive] = 0
     # total_var = (total_var - between_var).clip(min=0)
 
     target_addition = min(target_addition, stats.tet_view_count.shape[0])
@@ -245,14 +245,15 @@ def apply_densification(
     # ---------- debug renders -------------------------------------------------
     if args.output_path is not None:
 
-        f = mask_alive.float().unsqueeze(1).expand(-1, 4).clone()
-        color = torch.rand_like(f[:, :3])
-        # color = rgb + 0.5#torch.rand_like(f[:, :3])
-        f[:, :3] = color
-        f[:, 3] *= 2.0    # alpha
-        imageio.imwrite(args.output_path / f"alive_mask{iteration}.png",
-                        render_debug(f, model, sample_cam, 10))
+        # f = mask_alive.float().unsqueeze(1).expand(-1, 4).clone()
+        # # color = rgb + 0.5#torch.rand_like(f[:, :3])
+        # color = torch.rand_like(f[:, :3])
+        # f[:, :3] = color
+        # f[:, 3] *= 2.0    # alpha
+        # imageio.imwrite(args.output_path / f"alive_mask{iteration}.png",
+        #                 render_debug(f, model, sample_cam, 10))
         f = clone_mask.float().unsqueeze(1).expand(-1, 4).clone()
+        color = torch.rand_like(f[:, :3])
         f[:, :3] = color
         f[:, 3] *= 2.0    # alpha
         imageio.imwrite(args.output_path / f"densify{iteration}.png",

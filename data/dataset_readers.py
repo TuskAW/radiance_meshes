@@ -87,7 +87,7 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, metadata_pa
         T = np.array(extr.tvec)
 
         model = ProjectionType.PERSPECTIVE
-        distortion_params = None
+        distortion_params = {}
         if intr.model=="SIMPLE_PINHOLE":
             focal_length_x = intr.params[0]
             fovy = focal2fov(focal_length_x, height)
@@ -98,7 +98,7 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, metadata_pa
             fovy = focal2fov(focal_length_y, height)
             fovx = focal2fov(focal_length_x, width)
         elif intr.model=="OPENCV_FISHEYE":
-            distortion_params = None
+            distortion_params = {}
             fx, fy, cx, cy = intr.params[:4]
             k1, k2, k3, k4 = intr.params[4:]
             distortion_params = {}
@@ -144,6 +144,9 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, metadata_pa
             iso = 100
             aperature = 1
         # image = imageio.imread(image_path)
+
+        pkeys = ['k1', 'k2', 'k3', 'k4']
+        distortion_params = np.array([distortion_params[k]  if k in distortion_params else 0.0 for k in pkeys])
 
         cam_info = CameraInfo(uid=uid, R=R, T=T, fovy=fovy, fovx=fovx, cx=cx, cy=cy, image=image,
                               image_path=image_path, image_name=image_name, width=width,

@@ -4,7 +4,8 @@ import math
 from data.camera import Camera
 from utils import optim
 from sh_slang.eval_sh import eval_sh
-from delaunay_rasterization.internal.alphablend_tiled_slang_interp import AlphaBlendTiledRender
+from delaunay_rasterization.internal.alphablend_tiled_slang_interp import AlphaBlendTiledRender as Render
+from delaunay_rasterization.internal.alphablend_tiled_slang_linear import AlphaBlendTiledRender as LinearRender
 from delaunay_rasterization.internal.render_grid import RenderGrid
 from delaunay_rasterization.internal.tile_shader_slang import vertex_and_tile_shader, point2image
 import numpy as np
@@ -132,14 +133,14 @@ def render(camera: Camera, model, cell_values=None, tile_size=16, min_t=0.1,
         min_t=min_t,
         **camera.to_dict(device)
     )
-    sorted_tetra_idx, tile_ranges, vs_tetra, circumcenter, mask, _, tet_area = vertex_and_tile_shader(
+    sorted_tetra_idx, tile_ranges, vs_tetra, circumcenter, mask, _ = vertex_and_tile_shader(
         model.indices,
         vertices,
         tcam,
         render_grid)
     extras = {}
     if cell_values is None:
-        cell_values = torch.zeros((mask.shape[0], 7), device=circumcenter.device)
+        cell_values = torch.zeros((mask.shape[0], model.feature_dim), device=circumcenter.device)
         if mask.sum() > 0 and model.mask_values:
             normed_cc, cell_values[mask] = model.get_cell_values(camera, mask, circumcenter[mask])
         else:
@@ -152,7 +153,8 @@ def render(camera: Camera, model, cell_values=None, tile_size=16, min_t=0.1,
                 scaling = clip_multi*sensitivity.reshape(-1, 1).clip(min=1e-5)
             vertices = ClippedGradients.apply(vertices, scaling)
 
-    image_rgb, distortion_img, tet_alive = AlphaBlendTiledRender.apply(
+    mod = LinearRender if model.linear else Render
+    image_rgb, distortion_img, tet_alive = mod.apply(
         sorted_tetra_idx,
         tile_ranges,
         model.indices,
@@ -172,7 +174,6 @@ def render(camera: Camera, model, cell_values=None, tile_size=16, min_t=0.1,
         'distortion_loss': distortion_loss.mean(),
         'visibility_filter': mask,
         'circumcenters': circumcenter,
-        'tet_area': tet_area,
         'density': cell_values[:, 0],
         'mask': mask,
         **extras

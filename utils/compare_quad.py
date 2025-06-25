@@ -116,6 +116,8 @@ def test_tetrahedra_rendering(vertices, indices, vertex_color, tet_density, view
     model.indices = indices
     model.scene_scaling = 1
     model.device = 'cuda'
+    model.linear = False
+    model.feature_dim = 7
     def get_cell_values(camera, mask=None, all_circumcenters=None):
         if mask is not None:
             return tet_density, vertex_color[mask]
