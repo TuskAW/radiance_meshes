@@ -77,6 +77,8 @@ class FrozenTetModel(BaseModel):
         self.contract_vertices = False
         self.mask_values = False
         self.frozen = True
+        self.linear = False
+        self.feature_dim = 7
 
     @staticmethod
     def load_ckpt(path: Path, device):

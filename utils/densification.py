@@ -59,6 +59,7 @@ def collect_render_stats(
     within_var_rays = torch.zeros((n_tets, 2, 6), device=device)
     total_var_moments = torch.zeros((n_tets, 3), device=device)
     between_var_moments = torch.zeros((n_tets, 3), device=device)
+    top_moments = torch.zeros((n_tets, 2, 4), device=device)
 
 
     # Main per-camera loop -----------------------------------------------------
@@ -106,6 +107,7 @@ def collect_render_stats(
         total_within_var += within_var_votes
         votes_3 = torch.cat([total_within_var_votes, within_var_votes[:, None]], dim=1)
         votes_sorted, idx_sorted = votes_3.sort(1, descending=True)
+        total_within_var_votes = votes_sorted[:, :2]
 
         top_ssim, idx_sorted = torch.cat([top_ssim[:, :2], image_ssim.reshape(-1, 1)], dim=1).sort(1, descending=True)
         top_size = torch.gather(
@@ -113,8 +115,20 @@ def collect_render_stats(
             idx_sorted[:, :2]
         )
 
+        # -------- Other stats -------------------------------------------------
+        tet_moments[update_mask, :3] += image_votes[update_mask, 13:16]
+        tet_moments[update_mask, 3] += w[update_mask].reshape(-1)
+        moments = torch.cat([
+            image_votes[:, 13:16],
+            w.reshape(-1, 1)
+        ], dim=1)
+        moments_3 = torch.cat([top_moments, moments.reshape(-1, 1, 4)], dim=1)
+        top_moments = torch.gather(
+            moments_3, 1,
+            idx_sorted[:, :2, None].expand(-1, -1, 4)
+        )
+
         rays = torch.cat([seg_enter, seg_exit], dim=1)
-        total_within_var_votes = votes_sorted[:, :2]
         rays_3 = torch.cat([within_var_rays, rays[:, None]], dim=1)
         within_var_rays = torch.gather(
             rays_3, 1,
@@ -152,6 +166,7 @@ def collect_render_stats(
         total_var_moments = total_var_moments,
         between_var_moments = between_var_moments,
         tet_moments = tet_moments,
+        # tet_moments = top_moments.sum(dim=1),
         tet_view_count = tet_view_count,
         total_var_count = total_var_count,
         tet_size = tet_size,

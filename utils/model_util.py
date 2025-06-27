@@ -150,8 +150,6 @@ class iNGPDW(nn.Module):
                  log2_hashmap_size=16,
                  base_resolution=16,
                  per_level_scale=2,
-                 k_samples=1,
-                 trunc_sigma=0.3,
                  L=10,
                  hashmap_dim=4,
                  hidden_dim=64,
@@ -160,18 +158,14 @@ class iNGPDW(nn.Module):
                  d_init=0.1,
                  c_init=0.6,
                  density_offset=-4,
-                 density_beta=0.5,
                  **kwargs):
         super().__init__()
-        self.k_samples = k_samples
-        self.trunc_sigma = trunc_sigma
         self.scale_multi = scale_multi
         self.L = L
         self.dim = hashmap_dim
         self.per_level_scale = per_level_scale
         self.base_resolution = base_resolution
         self.density_offset = density_offset
-        self.density_beta = density_beta
 
         self.encoding = hashgrid.HashEmbedderOptimized(
             [torch.zeros((3)), torch.ones((3))],
@@ -215,7 +209,7 @@ class iNGPDW(nn.Module):
         x = x.detach()
         output = self.encoding(x).float()
         output = output.reshape(-1, self.dim, self.L)
-        cr = cr.float() * self.scale_multi
+        cr = cr.float().detach() * self.scale_multi
         n = torch.arange(self.L, device=x.device).reshape(1, 1, -1)
         erf_x = safe_div(torch.tensor(1.0, device=x.device),
                          safe_sqrt(self.per_level_scale * 4*n*cr.reshape(-1, 1, 1)))
@@ -225,22 +219,7 @@ class iNGPDW(nn.Module):
 
 
     def forward(self, x, cr):
-        if self.k_samples > 1:
-
-            # ------- draw Gaussian jitters inside the sphere -----------------
-            eps = torch.randn((x.shape[0], self.k_samples, 3),
-                              device=x.device)
-            eps = eps * (self.trunc_sigma * cr/4).view(-1,1,1)   # scale
-            samples_xf = (x.unsqueeze(1) + eps).reshape(-1, 3)
-
-            samples_xf.clamp_(0.0, 1.0)
-            samples_cr = cr.repeat_interleave(self.k_samples)
-
-            # ------- encode every jitter and mean in feature space -----------
-            output = self._encode(samples_xf, samples_cr)            # (B*k,F)
-            output = output.view(x.shape[0], self.k_samples, -1).mean(dim=1)
-        else:
-            output = self._encode(x, cr)
+        output = self._encode(x, cr)
 
         h = output.reshape(-1, self.L * self.dim)
 

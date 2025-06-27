@@ -82,32 +82,21 @@ args.final_encoding_lr = 3e-4
 args.network_lr = 1e-3
 args.final_network_lr = 1e-4
 args.hidden_dim = 64
-args.scale_multi = 1.0
+args.scale_multi = 0.35 # chosen such that 96% of the distribution is within the sphere 
 args.log2_hashmap_size = 22
 args.per_level_scale = 2
 args.L = 10
 args.density_offset = -4
-args.density_beta = 0.5
 args.weight_decay = 0.01
 args.hashmap_dim = 4
-
-args.grad_clip = 1e-2
+args.percent_alpha = 0.02 # preconditioning
 args.spike_duration = 1000
-
-args.k_samples = 1
-args.trunc_sigma = 0.3
-args.percent_alpha = 0.02
 
 args.dg_init=1e-4
 args.g_init=1.0
 args.s_init=1e-4
 args.d_init=0.1
 args.c_init=0.8
-
-args.density_lr = 1e-3
-args.color_lr = 1e-3
-args.gradient_lr = 1e-3
-args.sh_lr = 1e-3
 
 # Vertex Settings
 args.lr_delay = 0
@@ -151,8 +140,7 @@ args.lambda_tv = 0.0
 args.density_threshold = 0.001
 args.alpha_threshold = 0.001
 
-args.voxel_size = 0.05
-args.init_repeat = 1
+args.voxel_size = 0.01
 
 args.use_bilateral_grid = False
 args.bilateral_grid_shape = [16, 16, 8]
@@ -415,7 +403,7 @@ for iteration in progress_bar:
                 target_addition= target_addition
 
             )
-            tet_optim.prune(**args.as_dict())
+            # tet_optim.prune(**args.as_dict())
             gc.collect()
             torch.cuda.empty_cache()
 

@@ -111,16 +111,21 @@ class Model(BaseModel):
 
     @staticmethod
     def init_from_pcd(point_cloud, cameras, device, max_sh_deg,
-                      voxel_size=0.00, init_repeat=3, **kwargs):
+                      voxel_size=0.00, **kwargs):
         torch.manual_seed(2)
+
+        ccenters = torch.stack([c.camera_center.reshape(3) for c in cameras], dim=0).to(device)
+        center = ccenters.mean(dim=0)
+        scaling = torch.linalg.norm(ccenters - center.reshape(1, 3), dim=1, ord=torch.inf).max()
+        print(f"Scene scaling: {scaling}. Center: {center}")
 
         vertices = torch.as_tensor(point_cloud.points).float()
 
         dist = torch.clamp_min(distCUDA2(vertices.cuda()), 0.0000001).sqrt().cpu()
 
-        vertices = vertices.reshape(-1, 1, 3).expand(-1, init_repeat, 3)
-        vertices = vertices + torch.randn(*vertices.shape) * dist.reshape(-1, 1, 1).clip(min=0.01)
-        vertices = vertices.reshape(-1, 3)
+        # vertices = vertices.reshape(-1, 1, 3).expand(-1, init_repeat, 3)
+        # vertices = vertices + torch.randn(*vertices.shape) * dist.reshape(-1, 1, 1).clip(min=0.01)
+        # vertices = vertices.reshape(-1, 3)
 
         # Convert BasicPointCloud to Open3D PointCloud
         o3d_pcd = o3d.geometry.PointCloud()
@@ -133,10 +138,6 @@ class Model(BaseModel):
         N = point_cloud.points.shape[0]
         vertices = torch.as_tensor(np.asarray(o3d_pcd.points)).float()
         vertices = vertices + torch.randn(*vertices.shape) * 1e-3
-
-        ccenters = torch.stack([c.camera_center.reshape(3) for c in cameras], dim=0).to(device)
-        center = ccenters.mean(dim=0)
-        scaling = torch.linalg.norm(ccenters - center.reshape(1, 3), dim=1, ord=torch.inf).max()
 
         # add sphere
         pcd_scaling = torch.linalg.norm(vertices - center.cpu().reshape(1, 3), dim=1, ord=2).max()
@@ -323,18 +324,11 @@ class TetOptimizer:
         ], ignore_param_list=["encoding", "network"], betas=[0.9, 0.99], eps=1e-15)
         self.net_optim = optim.CustomAdam([
             {"params": model.backbone.network.parameters(), "lr": network_lr, "name": "network"},
-            {"params": model.backbone.density_net.parameters(),   "lr": density_lr,  "name": "density"},
-            {"params": model.backbone.color_net.parameters(),     "lr": color_lr,    "name": "color"},
-            {"params": model.backbone.gradient_net.parameters(),  "lr": gradient_lr, "name": "gradient"},
-            {"params": model.backbone.sh_net.parameters(),        "lr": sh_lr,       "name": "sh"},
+            {"params": model.backbone.density_net.parameters(),   "lr": network_lr,  "name": "density"},
+            {"params": model.backbone.color_net.parameters(),     "lr": network_lr,    "name": "color"},
+            {"params": model.backbone.gradient_net.parameters(),  "lr": network_lr, "name": "gradient"},
+            {"params": model.backbone.sh_net.parameters(),        "lr": network_lr,       "name": "sh"},
         ], ignore_param_list=[], betas=[0.9, 0.99])
-        self.ratios = dict(
-            network = 1,
-            density = density_lr / network_lr,
-            color = color_lr / network_lr,
-            gradient = gradient_lr / network_lr,
-            sh = sh_lr / network_lr,
-        )
         self.vert_lr_multi = 1 if model.contract_vertices else float(model.scene_scaling.cpu())
         self.vertex_optim = optim.CustomAdam([
             {"params": [model.contracted_vertices], "lr": self.vert_lr_multi*vertices_lr, "name": "contracted_vertices"},
@@ -394,9 +388,8 @@ class TetOptimizer:
         self.iteration = iteration
         self.model.alpha = self.alpha_sched(iteration)
         for param_group in self.net_optim.param_groups:
-            ratio = self.ratios[param_group["name"]]
             lr = self.net_scheduler_args(iteration)
-            param_group['lr'] = ratio * lr
+            param_group['lr'] = lr
         for param_group in self.optim.param_groups:
             if param_group["name"] == "encoding":
                 lr = self.encoder_scheduler_args(iteration)

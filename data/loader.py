@@ -5,8 +5,48 @@ from PIL import Image
 
 from data.dataset_readers import sceneLoadTypeCallbacks
 from data.camera import Camera
+from data.types import BasicPointCloud
+from tqdm import tqdm
 
 WARNED = False
+
+def transform_poses_pca(poses):
+    """
+    Transforms poses so principal components lie on XYZ axes.
+
+    Args:
+        poses: A (N, 3, 4) array of camera-to-world transforms.
+
+    Returns:
+        A tuple (poses, transform) with the transformed poses and the
+        applied 4x4 transformation matrix.
+    """
+    def pad(p):
+        return np.concatenate([p, np.tile(np.eye(4)[3:, :], (p.shape[0], 1, 1))], axis=1)
+
+    def unpad(p):
+        return p[:, :3, :]
+
+    t = poses[:, :3, 3]
+    t_mean = t.mean(axis=0)
+    t = t - t_mean
+
+    eigval, eigvec = np.linalg.eig(t.T @ t)
+    inds = np.argsort(eigval)[::-1]
+    eigvec = eigvec[:, inds]
+    rot = eigvec.T
+    if np.linalg.det(rot) < 0:
+        rot = np.diag(np.array([1, 1, -1])) @ rot
+
+    transform = np.concatenate([rot, rot @ -t_mean[:, None]], -1)
+    poses_recentered = unpad(transform @ pad(poses))
+    transform = np.concatenate([transform, np.eye(4)[3:]], axis=0)
+
+    if poses_recentered.mean(axis=0)[2, 1] < 0:
+        poses_recentered = np.diag(np.array([1, -1, -1])) @ poses_recentered
+        transform = np.diag(np.array([1, -1, -1, 1])) @ transform
+
+    return poses_recentered, transform
 
 def PILtoTorch(pil_image, resolution):
     resized_image_PIL = pil_image.resize(resolution)
@@ -56,12 +96,37 @@ def load_cam(data_device, resolution, id, cam_info, resolution_scale):
 
 def load_cameras(cam_infos, resolution_scale, resolution, data_device):
     camera_list = []
-
-    for id, c in enumerate(cam_infos):
+    for id, c in tqdm(enumerate(cam_infos), total=len(cam_infos), desc="Loading cameras"):
         camera_list.append(load_cam(data_device, resolution, id, c, resolution_scale))
     print(cam_infos[0])
-
     return camera_list
+
+def transform_cameras_pca(cameras):
+    if len(cameras) == 0:
+        return cameras, np.eye(4)
+    poses = np.stack([
+        np.linalg.inv(view.world_view_transform.T.cpu().numpy())[:3]
+        for view in cameras], axis=0)
+    new_poses, transform = transform_poses_pca(poses)
+    for i, cam in enumerate(cameras):
+        T = np.eye(4)
+        T[:3] = new_poses[i][:3]
+        T = torch.linalg.inv(torch.tensor(T).float()).to(cam.world_view_transform.device)
+        T[:3, 0] = T[:3, 0]*torch.linalg.det(T[:3, :3])
+        cameras[i] = set_pose(cam, T)
+    return cameras, transform
+
+def set_pose(camera, T):
+    # camera.world_view_transform = T.T
+    # camera.full_proj_transform = (
+    #     camera.world_view_transform.unsqueeze(0).bmm(
+    #         camera.projection_matrix.unsqueeze(0))).squeeze(0)
+    # camera.camera_center = camera.world_view_transform.inverse()[3, :3]
+    camera.R = T[:3, :3].T.numpy()
+    camera.T = T[:3, 3].numpy()
+    camera.update()
+    return camera
+
 
 def load_dataset(source_path, images_folder, data_device, eval, white_background=True, resolution_scale=1.0, resolution=-1):
     if os.path.exists(os.path.join(source_path, "sparse")):
@@ -72,8 +137,21 @@ def load_dataset(source_path, images_folder, data_device, eval, white_background
     else:
         assert False, "Could not recognize scene type!"
 
+
     train_cameras = load_cameras(scene_info.train_cameras, resolution_scale, resolution, data_device)
     print(f"Loaded Train Cameras: {len(train_cameras)}")
     test_cameras = load_cameras(scene_info.test_cameras, resolution_scale, resolution, data_device)
     print(f"Loaded Test Cameras: {len(test_cameras)}")
+
+    print("Transforming poses")
+    _, pca_transform = transform_cameras_pca(train_cameras + test_cameras)
+    xyz = scene_info.point_cloud.points
+    xyz_hom = np.hstack((xyz, np.ones((xyz.shape[0], 1))))
+    xyz_transformed_hom = (pca_transform @ xyz_hom.T).T
+    transformed_pcd = scene_info.point_cloud._replace(points=xyz_transformed_hom[:, :3])
+    scene_info = scene_info._replace(
+        point_cloud=transformed_pcd,
+    )
+
+
     return train_cameras, test_cameras, scene_info

@@ -139,7 +139,6 @@ class iNGPDWL(nn.Module):
                  d_init=0.1,
                  c_init=0.6,
                  density_offset=-4,
-                 density_beta=0.5,
                  **kwargs):
         super().__init__()
         self.k_samples = k_samples
@@ -150,7 +149,6 @@ class iNGPDWL(nn.Module):
         self.per_level_scale = per_level_scale
         self.base_resolution = base_resolution
         self.density_offset = density_offset
-        self.density_beta = density_beta
 
         self.encoding = hashgrid.HashEmbedderOptimized(
             [torch.zeros((3)), torch.ones((3))],
