@@ -226,9 +226,10 @@ def apply_densification(
     # --- Masking and target calculation --------------------------------------
     tet_density = model.calc_tet_density()
     alphas = model.calc_tet_alpha(mode="max", density=tet_density)
-    # mask_alive = alphas >= args.clone_min_alpha
-    # mask_alive = (alphas >= args.clone_min_alpha) & (stats.peak_contrib >= args.clone_min_density)
     mask_alive = (alphas >= args.clone_min_alpha) & (tet_density.reshape(-1) >= args.clone_min_density)
+    # area = topo_utils.tet_volumes(model.vertices[model.indices])
+    # ratio = safe_math.safe_div(alphas, area)
+    # mask_alive = ratio > args.clone_min_ratio
     total_var[~mask_alive] = 0
     within_var[~mask_alive] = 0
     between_var[~mask_alive] = 0

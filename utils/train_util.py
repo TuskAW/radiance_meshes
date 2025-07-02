@@ -110,7 +110,7 @@ def safe_sin(x):
 
 
 def render(camera: Camera, model, cell_values=None, tile_size=16, min_t=0.1,
-           scene_scaling=1, clip_multi=1e-1, ray_jitter=None,
+           scene_scaling=1, clip_multi=0, ray_jitter=None,
            **kwargs):
     device = model.device
     if ray_jitter is None:
@@ -145,7 +145,7 @@ def render(camera: Camera, model, cell_values=None, tile_size=16, min_t=0.1,
             normed_cc, cell_values[mask] = model.get_cell_values(camera, mask, circumcenter[mask])
         else:
             normed_cc, cell_values = model.get_cell_values(camera, all_circumcenters=circumcenter)
-        if clip_multi is not None and not model.frozen:
+        if clip_multi > 0 and not model.frozen:
             with torch.no_grad():
                 tet_sens, sensitivity = topo_utils.compute_vertex_sensitivity(model.indices[mask],
                                                                             vertices, normed_cc, True)

@@ -8,7 +8,7 @@ from utils.topo_utils import calculate_circumcenters_torch, fibonacci_spiral_on_
 from utils.safe_math import safe_exp, safe_div, safe_sqrt
 from utils.contraction import contract_mean_std
 from utils.contraction import contract_points, inv_contract_points
-from sh_slang.eval_sh import eval_sh
+from sh_slang.eval_sh_py import eval_sh
 from utils.hashgrid import HashEmbedderOptimized
 from icecream import ic
 import torch.nn.init as init # Common alias for torch.nn.init
@@ -136,9 +136,9 @@ def activate_output(camera_center, density, rgb, grd, sh, indices, circumcenters
     tet_color_raw = eval_sh(
         tets.mean(dim=1),
         RGB2SH(base_color_v0_raw),
-        sh.reshape(-1, (max_sh_deg+1)**2 - 1, 3),
+        sh.reshape(-1, (max_sh_deg+1)**2 - 1, 3).half(),
         camera_center,
-        current_sh_deg)
+        current_sh_deg).float()
     base_color_v0 = torch.nn.functional.softplus(tet_color_raw.reshape(-1, 3, 1), beta=10)
     features = torch.cat([density, base_color_v0.reshape(-1, 3), normed_grd.reshape(-1, 3)], dim=1)
     return features.float()
@@ -226,7 +226,7 @@ class iNGPDW(nn.Module):
         sigma = self.density_net(h)
         rgb = self.color_net(h)
         field_samples = self.gradient_net(h)
-        sh  = self.sh_net(h)
+        sh  = self.sh_net(h).half()
 
         rgb = rgb.reshape(-1, 3, 1) + 0.5
         density = safe_exp(sigma+self.density_offset)

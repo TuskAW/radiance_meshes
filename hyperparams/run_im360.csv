@@ -1,0 +1,6 @@
+dataset_path,image_folder
+/optane/nerf_datasets/360/room,images_2
+/optane/nerf_datasets/360/counter,images_2
+/optane/nerf_datasets/360/kitchen,images_2
+/optane/nerf_datasets/360/bonsai,images_2
+

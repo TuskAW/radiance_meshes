@@ -118,3 +118,62 @@ def eval_sh(deg: int, sh, dirs):
                             0.6258357354491761 * (xx * (xx - 3 * yy) - yy * (3 * xx - yy)) * sh[..., 24])
     return result
 
+@torch.jit.script
+def eval_sh(means, sh0, sh_rest, camera_center, deg: int):
+    """
+    Evaluate spherical harmonics at unit directions
+    using hardcoded SH polynomials.
+    Works with torch/np/jnp.
+    ... Can be 0 or more batch dimensions.
+    Args:
+        deg: int SH deg. Currently, 0-3 supported
+        sh_rest: jnp.ndarray SH coeffs [..., C, (deg + 1) ** 2]
+        dirs: jnp.ndarray unit directions [..., 3]
+    Returns:
+        [..., C]
+    """
+    assert deg <= 4 and deg >= 0
+    coeff = (deg + 1) ** 2
+    assert sh_rest.shape[1] >= coeff-1
+    dirs = torch.nn.functional.normalize(
+        means.reshape(-1, 3) - camera_center.reshape(1, 3), dim=1, eps=1e-8)
+
+    result = 0.28209479177387814 * sh0 + 0.5
+    if deg > 0:
+        x, y, z = dirs[..., 0:1], dirs[..., 1:2], dirs[..., 2:3]
+        result = (result -
+            0.4886025119029199 * y * sh_rest[..., 0, :] +
+            0.4886025119029199 * z * sh_rest[..., 1, :] -
+            0.4886025119029199 * x * sh_rest[..., 2, :])
+
+        if deg > 1:
+            xx, yy, zz = x * x, y * y, z * z
+            xy, yz, xz = x * y, y * z, x * z
+            result = (result +
+                1.0925484305920792 * xy * sh_rest[..., 3, :] +
+                -1.0925484305920792 * yz * sh_rest[..., 4, :] +
+                0.31539156525252005 * (2.0 * zz - xx - yy) * sh_rest[..., 5, :] +
+                -1.0925484305920792 * xz * sh_rest[..., 6, :] +
+                0.5462742152960396 * (xx - yy) * sh_rest[..., 7, :])
+
+            if deg > 2:
+                result = (result +
+                    -0.5900435899266435 * y * (3 * xx - yy) * sh_rest[..., 8, :] +
+                    2.890611442640554 * xy * z * sh_rest[..., 9, :] +
+                    -0.4570457994644658 * y * (4 * zz - xx - yy)* sh_rest[..., 10, :] +
+                    0.3731763325901154 * z * (2 * zz - 3 * xx - 3 * yy) * sh_rest[..., 11, :] +
+                    -0.4570457994644658 * x * (4 * zz - xx - yy) * sh_rest[..., 12, :] +
+                    1.445305721320277 * z * (xx - yy) * sh_rest[..., 13, :] +
+                    -0.5900435899266435 * x * (xx - 3 * yy) * sh_rest[..., 14, :])
+
+                if deg > 3:
+                    result = (result + 2.5033429417967046 * xy * (xx - yy) * sh_rest[..., 15, :] +
+                        -1.7701307697799304 * yz * (3 * xx - yy) * sh_rest[..., 16, :] +
+                        0.9461746957575601 * xy * (7 * zz - 1) * sh_rest[..., 17, :] +
+                        -0.6690465435572892 * yz * (7 * zz - 3) * sh_rest[..., 18, :] +
+                        0.10578554691520431 * (zz * (35 * zz - 30) + 3) * sh_rest[..., 19, :] +
+                        -0.6690465435572892 * xz * (7 * zz - 3) * sh_rest[..., 20, :] +
+                        0.47308734787878004 * (xx - yy) * (7 * zz - 1) * sh_rest[..., 21, :] +
+                        -1.7701307697799304 * xz * (xx - 3 * yy) * sh_rest[..., 22, :] +
+                        0.6258357354491761 * (xx * (xx - 3 * yy) - yy * (3 * xx - yy)) * sh_rest[..., 23, :])
+    return result

@@ -46,14 +46,14 @@ class FrozenTetModel(BaseModel):
         scene_scaling: torch.Tensor | float,
         *,
         density_offset: float = -1.0,
-        current_sh_deg: int = 2,
         max_sh_deg: int = 2,
         chunk_size: int = 408_576,
+        **kwargs
     ) -> None:
         super().__init__()
 
         # geometry ----------------------------------------------------------------
-        self.register_buffer("contracted_vertices", int_vertices)          # immutable
+        self.register_buffer("interior_vertices", int_vertices)          # immutable
         self.register_buffer("ext_vertices", ext_vertices)
         self.register_buffer("indices", indices.int())
         self.register_buffer("center", center.reshape(1, 3))
@@ -65,7 +65,7 @@ class FrozenTetModel(BaseModel):
         self.density   = nn.Parameter(density)    # (T, 1)
         self.gradient  = nn.Parameter(gradient)   # (T, 3, 3)
         self.rgb       = nn.Parameter(rgb)        # (T, 3)
-        self.sh        = nn.Parameter(sh)         # (T, SH, 3)
+        self.sh        = nn.Parameter(sh.half())         # (T, SH, 3)
 
         # misc --------------------------------------------------------------------
         self.density_offset  = density_offset
@@ -73,9 +73,7 @@ class FrozenTetModel(BaseModel):
         self.chunk_size      = chunk_size
         self.device          = self.density.device
 
-        # flag to inform external code that vertices are frozen
-        self.contract_vertices = False
-        self.mask_values = False
+        self.mask_values = True
         self.frozen = True
         self.linear = False
         self.feature_dim = 7
@@ -102,7 +100,7 @@ class FrozenTetModel(BaseModel):
         ckpt = torch.load(ckpt_path)
         
         # Extract required parameters from checkpoint
-        int_vertices = ckpt['contracted_vertices']
+        int_vertices = ckpt['interior_vertices']
         ext_vertices = ckpt['ext_vertices']
         indices = ckpt['indices']
         density = ckpt['density']
@@ -142,7 +140,7 @@ class FrozenTetModel(BaseModel):
     @property
     def vertices(self) -> torch.Tensor:
         """Concatenated vertex tensor (internal + exterior)."""
-        return torch.cat([self.contracted_vertices, self.ext_vertices], dim=0)
+        return torch.cat([self.interior_vertices, self.ext_vertices], dim=0)
 
 
     # ------------------------------------------------------------------
@@ -152,6 +150,7 @@ class FrozenTetModel(BaseModel):
         self,
         vertices: torch.Tensor,
         indices: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
         circumcenters: Optional[torch.Tensor] = None,
     ):
         if circumcenters is None:
@@ -162,12 +161,16 @@ class FrozenTetModel(BaseModel):
             circumcenter = circumcenters
         normalized = (circumcenter - self.center) / self.scene_scaling
 
-        density  = self.density
-        grd      = self.gradient
-        # density  = safe_exp(self.density)
-        # grd      = torch.tanh(self.gradient)
-        rgb      = self.rgb
-        sh       = self.sh
+        if mask is not None:
+            density  = self.density[mask]
+            grd      = self.gradient[mask]
+            rgb      = self.rgb[mask]
+            sh       = self.sh[mask]
+        else:
+            density  = self.density
+            grd      = self.gradient
+            rgb      = self.rgb
+            sh       = self.sh
 
         return circumcenter, normalized, density, rgb, grd, sh
 
@@ -195,7 +198,7 @@ class FrozenTetModel(BaseModel):
         indices = self.indices[mask] if mask is not None else self.indices
         vertices = self.vertices
         cc, normalized, density, rgb, grd, sh = self.compute_batch_features(
-            vertices, indices, circumcenters=all_circumcenters
+            vertices, indices, mask, circumcenters=all_circumcenters
         )
         cell_output = activate_output(
             camera.camera_center.to(self.device),
@@ -213,7 +216,7 @@ class FrozenTetModel(BaseModel):
 
     @property
     def num_int_verts(self):
-        return self.contracted_vertices.shape[0]
+        return self.interior_vertices.shape[0]
 
     def calc_tet_density(self):
         densities = []
@@ -290,11 +293,8 @@ class FrozenTetOptimizer:
         self,
         model: FrozenTetModel,
         *,
-        density_lr:   float = 1e-3,
-        final_density_lr:   float = 1e-4,
-        color_lr:     float = 1e-3,
-        gradient_lr:  float = 1e-3,
-        sh_lr:        float = 1e-3,
+        freeze_lr:   float = 1e-3,
+        final_freeze_lr:   float = 1e-4,
         weight_decay: float = 1e-10,
         lambda_tv:    float = 0.0,
         lambda_density: float = 0.0,
@@ -302,6 +302,7 @@ class FrozenTetOptimizer:
         lr_delay=0,
         freeze_start: int = 15000,
         iterations: int = 30000,
+        **kwargs
     ) -> None:
         self.model = model
         self.weight_decay   = weight_decay
@@ -313,21 +314,16 @@ class FrozenTetOptimizer:
         # ------------------------------------------------------------------
         self.optim = torch.optim.RMSprop([
         # self.optim = torch.optim.Adam([
-            {"params": [model.density],  "lr": density_lr,  "name": "density"},
-            {"params": [model.rgb],      "lr": color_lr,    "name": "color"},
-            {"params": [model.gradient], "lr": gradient_lr, "name": "gradient"},
-            {"params": [model.sh],       "lr": sh_lr,       "name": "sh"},
+            {"params": [model.density],  "lr": freeze_lr,  "name": "density"},
+            {"params": [model.rgb],      "lr": freeze_lr,    "name": "color"},
+            {"params": [model.gradient], "lr": freeze_lr, "name": "gradient"},
         ])
-        self.sh_optim = None
-        self.ratios = dict(
-            density = 1,
-            color = color_lr / density_lr,
-            gradient = gradient_lr / density_lr,
-            sh = sh_lr / density_lr,
-        )
+        self.sh_optim = torch.optim.RMSprop([
+            {"params": [model.sh],       "lr": freeze_lr,       "name": "sh"},
+        ], eps=1e-4)
         self.freeze_start = freeze_start
-        self.scheduler = get_expon_lr_func(lr_init=density_lr,
-                                           lr_final=final_density_lr,
+        self.scheduler = get_expon_lr_func(lr_init=freeze_lr,
+                                           lr_final=final_freeze_lr,
                                            lr_delay_mult=lr_delay_multi,
                                            max_steps=iterations - self.freeze_start,
                                            lr_delay_steps=lr_delay)
@@ -362,10 +358,8 @@ class FrozenTetOptimizer:
         ''' Learning rate scheduling per step '''
         self.iteration = iteration
         for param_group in self.optim.param_groups:
-            # if param_group["name"] == "network":
-            ratio = self.ratios[param_group["name"]]
             lr = self.scheduler(iteration - self.freeze_start)
-            param_group['lr'] = ratio * lr
+            param_group['lr'] = lr
 
     @torch.no_grad()
     def split(self, clone_indices, split_point, split_mode):
@@ -375,9 +369,9 @@ class FrozenTetOptimizer:
     # regularisers ------------------------------------------------------
     # ------------------------------------------------------------------
     def regularizer(self, *_):
-        wd_loss = self.weight_decay * sum((p ** 2).mean() for p in [
-            self.model.density, self.model.rgb, self.model.gradient, self.model.sh
-        ])
+        # wd_loss = self.weight_decay * sum((p ** 2).mean() for p in [
+        #     self.model.density, self.model.rgb, self.model.gradient, self.model.sh
+        # ])
 
         if self.lambda_density > 0:
             density = self.model.density.squeeze(-1)
@@ -392,7 +386,7 @@ class FrozenTetOptimizer:
         else:
             tv_loss = 0.0
 
-        return wd_loss + self.lambda_density * density_loss + self.lambda_tv * tv_loss
+        return self.lambda_density * density_loss + self.lambda_tv * tv_loss
 
 def _offload_model_to_cpu(model: nn.Module):
     """Move every parameter & buffer to CPU and drop gradients to free GPU VRAM."""
@@ -409,10 +403,6 @@ def _offload_model_to_cpu(model: nn.Module):
 def freeze_model(
     base_model,
     *,
-    density_lr:   float = 1e-4,
-    color_lr:     float = 1e-4,
-    gradient_lr:  float = 1e-4,
-    sh_lr:        float = 1e-4,
     weight_decay: float = 1e-10,
     lambda_tv:    float = 0.0,
     lambda_density: float = 0.0,
@@ -436,13 +426,10 @@ def freeze_model(
 
     frozen_optim = FrozenTetOptimizer(
         frozen_model,
-        density_lr=density_lr,
-        color_lr=color_lr,
-        gradient_lr=gradient_lr,
-        sh_lr=sh_lr,
         weight_decay=weight_decay,
         lambda_tv=lambda_tv,
         lambda_density=lambda_density,
+        **kwargs
     )
 
     # free GPU memory used by the big backbone (optional but handy)

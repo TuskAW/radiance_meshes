@@ -1,0 +1,4 @@
+dataset_path,error,gpu_id,images,output_folder
+/optane/nerf_datasets/360/counter,Process failed and no JSON output file found,2,images_2,output/counter_iimages_2_r25
+/optane/nerf_datasets/360/room,Process failed and no JSON output file found,1,images_2,output/room_iimages_2_r25
+/optane/nerf_datasets/360/kitchen,Process failed and no JSON output file found,3,images_2,output/kitchen_iimages_2_r25

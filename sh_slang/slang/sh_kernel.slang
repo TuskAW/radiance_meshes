@@ -15,6 +15,42 @@
 import safe_math;
 import tensor_util;
 import sh;
+/*
+import tensor_util_half;
+import sh_half;
+
+[Differentiable]
+[AutoPyBindCUDA]
+[CUDAKernel]
+void half_sh_kernel(
+    DiffTensorView<float> means,
+    DiffTensorView<half> sh0,
+    DiffTensorView<half> features,
+    DiffTensorView<float> ray_origin,
+    DiffTensorView<half> colors,
+    uint sh_degree)
+{
+    uint3 dispatchIdx = cudaThreadIdx() + cudaBlockIdx() * cudaBlockDim();
+    uint prim_ind = dispatchIdx.x;
+    float3 rayo = {ray_origin[0], ray_origin[1], ray_origin[2]};
+
+    if (prim_ind >= means.size(0)) {
+        return;
+    }
+    float3 mean = get_float3(means, prim_ind);
+    // First, check
+    float3 dir_pp = normalize(mean - rayo);
+    half3 dir_pp_h = {(half) dir_pp.x, (half)dir_pp.y, (half)dir_pp.z};
+    //if (dot(dir_pp, rayd) < 0) {
+        //return;
+    //}
+    HalfFeatures feat = get_feats(sh0, features, prim_ind, sh_degree);
+    float3 color = half_eval_color(dir_pp, feat, sh_degree);
+    colors[prim_ind, 0] = color.x;
+    colors[prim_ind, 1] = color.y;
+    colors[prim_ind, 2] = color.z;
+}
+*/
 
 [AutoPyBindCUDA]
 [CUDAKernel]

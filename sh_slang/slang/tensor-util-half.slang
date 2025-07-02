@@ -14,7 +14,8 @@
 // limitations under the License.
 import sh_half;
 
-half3 get_half3(TensorView<half> view, uint ind) {
+[Differentiable]
+half3 get_half3(DiffTensorView<half> view, uint ind) {
     return {
         view[ind, 0],
         view[ind, 1],
@@ -22,7 +23,8 @@ half3 get_half3(TensorView<half> view, uint ind) {
     };
 }
 
-half3 get_half3(TensorView<half> view, uint ind, uint feat_ind) {
+[Differentiable]
+half3 get_half3(DiffTensorView<half> view, uint ind, uint feat_ind) {
     return {
         view[ind, feat_ind, 0],
         view[ind, feat_ind, 1],
@@ -30,13 +32,15 @@ half3 get_half3(TensorView<half> view, uint ind, uint feat_ind) {
     };
 }
 
-void add_half3(TensorView<half> view, uint ind, uint feat_ind, half3 val) {
+[Differentiable]
+void add_half3(DiffTensorView<half> view, uint ind, uint feat_ind, half3 val) {
     view[uint3(ind, feat_ind, 0u)] += val.x;
     view[uint3(ind, feat_ind, 1u)] += val.y;
     view[uint3(ind, feat_ind, 2u)] += val.z;
 }
 
-HalfFeatures half_get_feats(in TensorView<half> features, in uint prim_ind, in uint sh_degree) {
+[Differentiable]
+HalfFeatures half_get_feats(in DiffTensorView<half> features, in uint prim_ind, in uint sh_degree) {
     HalfFeatures feat;
     feat.f0 = get_half3(features, prim_ind, 0);
     //color = id2color(ind);

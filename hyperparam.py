@@ -57,7 +57,7 @@ def run_test(test_params, gpu_id, args):
     os.makedirs(output_folder, exist_ok=True)
     
     # Base command with GPU assignment and script name.
-    base_command = f"CUDA_VISIBLE_DEVICES={gpu_id} python train.py --eval "
+    base_command = f"PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True CUDA_VISIBLE_DEVICES={gpu_id} python train.py --eval "
     
     # Build command-line arguments. Override any CSV-specified output_path with our unique folder.
     cmd_args = []

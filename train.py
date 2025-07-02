@@ -61,12 +61,12 @@ class SimpleSampler:
 
 eps = torch.finfo(torch.float).eps
 args = Args()
-args.tile_size = 16
+args.tile_size = 4
 args.image_folder = "images_4"
 args.eval = False
 args.dataset_path = Path("/data/nerf_datasets/360/bicycle")
 args.output_path = Path("output/test/")
-args.iterations = 40000
+args.iterations = 30000
 args.ckpt = ""
 args.render_train = False
 
@@ -87,9 +87,9 @@ args.per_level_scale = 2
 args.L = 10
 args.density_offset = -4
 args.weight_decay = 0.01
-args.hashmap_dim = 4
+args.hashmap_dim = 16
 args.percent_alpha = 0.02 # preconditioning
-args.spike_duration = 1000
+args.spike_duration = 500
 
 args.dg_init=1e-4
 args.g_init=1.0
@@ -99,15 +99,18 @@ args.c_init=0.8
 
 # Vertex Settings
 args.lr_delay = 0
-args.vert_lr_delay = 50
+args.vert_lr_delay = 0
 args.vertices_lr = 1e-4
-args.final_vertices_lr = 1e-7
+args.final_vertices_lr = 1e-6
 args.vertices_lr_delay_multi = 1e-8
 args.vertices_beta = [0.9, 0.99]
 args.contract_vertices = False
-args.clip_multi = 1e-2
-args.delaunay_start = 40000
-args.freeze_start = 30000
+args.clip_multi = 0
+args.delaunay_start = 30000
+
+args.freeze_start = 22500
+args.freeze_lr = 1e-3
+args.final_freeze_lr = 1e-4
 
 # Distortion Settings
 args.lambda_dist = 1e-4
@@ -115,21 +118,22 @@ args.lambda_dist = 1e-4
 # Clone Settings
 args.num_samples = 200
 args.clone_lambda_ssim = 0.0
-args.split_std = 1e-3
+args.split_std = 1e-1
 args.split_mode = "split_point"
 args.clone_schedule = "quadratic"
 args.min_tet_count = 9
-args.densify_start = 1000
+args.densify_start = 2000
 args.densify_end = 20000
-args.densify_interval = 1000
+args.densify_interval = 500
 args.budget = 2_000_000
 args.clone_velocity = 0.0
 args.speed_mul = 10
-args.percent_within = 0.99
-args.percent_total = 0.01
+args.percent_within = 0.70
+args.percent_total = 0.30
 args.diff_threshold = 0.0
 args.clone_min_alpha = 0.025
 args.clone_min_density = 0.025
+args.clone_min_ratio = 1.0
 
 args.lambda_ssim = 0.2
 args.base_min_t = 0.2
@@ -151,6 +155,7 @@ args.checkpoint_iterations = []
 args = Args.from_namespace(args.get_parser().parse_args())
 
 args.output_path.mkdir(exist_ok=True, parents=True)
+# args.checkpoint_iterations.append(args.freeze_start-1)
 
 train_cameras, test_cameras, scene_info = loader.load_dataset(
     args.dataset_path, args.image_folder, data_device=args.data_device, eval=args.eval)

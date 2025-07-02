@@ -12,6 +12,21 @@ import math
 from scipy.spatial import ConvexHull
 from utils.safe_math import safe_div
 
+def tet_volumes(tets):
+    v0 = tets[:, 0]
+    v1 = tets[:, 1]
+    v2 = tets[:, 2]
+    v3 = tets[:, 3]
+
+    a = v1 - v0
+    b = v2 - v0
+    c = v3 - v0
+    
+    mat = torch.stack((a, b, c), dim=1)
+    det = torch.det(mat)
+    
+    vol = torch.abs(det) / 6.0
+    return vol
 
 @torch.jit.script
 def calc_barycentric(points, tets):
