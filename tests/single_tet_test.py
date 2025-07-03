@@ -8,6 +8,8 @@ from utils.test_util import compare_dict_values, bcolors, check_tile_indices
 import random
 import math
 from icecream import ic
+from utils.model_util import offset_normalize
+from utils.topo_utils import calculate_circumcenters_torch
 torch.set_printoptions(precision=32)
 
 key_pairs = [
@@ -38,18 +40,22 @@ class TetrahedraRenderingTest(parameterized.TestCase):
         return torch.tensor(quat.rotation_matrix, device='cuda').float()
 
     def run_test(self, vertices, viewmat, tile_size):
-        vertex_color = torch.tensor([
-                [1.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0],
-                [0.0, 0.0, 1.0],
-                [0.5, 0.0, 0.5],
-        ]).cuda()
+        raw_cell_values = torch.tensor([
+            10.0, #density
+            0.25, 0.5, 0.1, # base color
+            -0.15, 0.25, 0.1, # gradient color
+        ]).reshape(1, -1).cuda()
+        circumcenters, _ = calculate_circumcenters_torch(vertices.reshape(1, 4, 3))
+        new_color, new_grd = offset_normalize(
+            raw_cell_values[:, 1:4], raw_cell_values[:, 4:7], circumcenters, vertices.reshape(1, 4, 3))
+        raw_cell_values[:, 1:4] = new_color
+        raw_cell_values[:, 4:7] = new_grd
         tet_density = torch.tensor([[10.0]]).cuda()
-        vertex_color = torch.cat([tet_density.reshape(1, 1), vertex_color.reshape(1, -1)], dim=1)
 
-        results1 = test_tetrahedra_rendering(vertices, self.indices, vertex_color, tet_density, viewmat, 
+
+        results1 = test_tetrahedra_rendering(vertices, self.indices, raw_cell_values, tet_density, viewmat, 
                                              height=self.height, width=self.width, tile_size=tile_size, n_samples=10000)
-        results2 = test_tetrahedra_rendering(vertices, self.indices, vertex_color, tet_density, viewmat, 
+        results2 = test_tetrahedra_rendering(vertices, self.indices, raw_cell_values, tet_density, viewmat, 
                                              height=self.height, width=self.width, tile_size=tile_size, n_samples=5000)
         compare_dict_values(results1, results2, key_pairs, vertices, viewmat)
 

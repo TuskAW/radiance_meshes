@@ -7,12 +7,14 @@ from utils.compare_quad import test_tetrahedra_rendering
 from utils.test_util import compare_dict_values, bcolors, compute_delaunay, generate_color_palette
 import random
 import math
+from utils.model_util import offset_normalize
+from utils.topo_utils import calculate_circumcenters_torch
 
 key_pairs = [
     ('torch_image', 'jax_image', 'Image', 1e-1, 1e-1),
     ('torch_dist_loss', 'jax_dist_loss', 'Distortion Loss', 1e-2, 1e-2),
-    ('torch_tet_density_grad', 'jax_tet_density_grad', 'Sigma gradient', 1e-1, 1e-1)
-    ('torch_vertex_color_grad', 'jax_vertex_color_grad', 'Sigma gradient', 1e-1, 1e-1)
+    ('torch_tet_density_grad', 'jax_tet_density_grad', 'Sigma gradient', 1e-1, 1e-1),
+    ('torch_cell_values_grad', 'jax_cell_values_grad', 'Cell values gradient', 1e-1, 1e-1)
 ]
 
 def generate_point_cloud(n_points, radius, device='cuda'):
@@ -49,16 +51,26 @@ class DelaunayRenderTest(parameterized.TestCase):
     def run_test(self, points, viewmat, tile_size):
         """Run rendering test with different sample counts and compare results."""
         indices = compute_delaunay(points)
-        vertex_colors = generate_color_palette(indices.shape[0] * 4)[:, :3].reshape(-1, 4, 3)
-        tet_density = torch.ones((len(indices),), device='cuda')
+        N = indices.shape[0]
+        all = generate_color_palette(N*2)[:, :3]
+        base_colors = all[:N].reshape(-1, 3)
+        raw_grd = (2*all[N:].reshape(-1, 3)-1) / math.sqrt(3)
+        tets = points[indices]
+        circumcenters, _ = calculate_circumcenters_torch(tets)
+        new_color, new_grd = offset_normalize(
+            base_colors, raw_grd,
+            circumcenters, tets)
+
+        tet_density = torch.ones((len(indices),1), device='cuda')
+        raw_cell_values = torch.cat([tet_density, new_color, new_grd.reshape(-1, 3)], dim=1)
         results = test_tetrahedra_rendering(
-            points, indices, vertex_colors, tet_density, viewmat,
+            points, indices, raw_cell_values, tet_density, viewmat,
             height=self.height, width=self.width, 
             tile_size=tile_size, n_samples=10000
         )
         
         results2 = test_tetrahedra_rendering(
-            points, indices, vertex_colors, tet_density, viewmat,
+            points, indices, raw_cell_values, tet_density, viewmat,
             height=self.height, width=self.width, 
             tile_size=tile_size, n_samples=5000
         )

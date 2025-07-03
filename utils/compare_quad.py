@@ -56,7 +56,7 @@ def setup_camera(height, width, fov_degrees, viewmat):
     
     return viewmat, K, cam_pos, fovy, fovx, fx, fy
 
-def test_tetrahedra_rendering(vertices, indices, vertex_color, tet_density, viewmat, n_samples=10000, height=3, width=3,
+def test_tetrahedra_rendering(vertices, indices, cell_values, tet_density, viewmat, n_samples=10000, height=3, width=3,
                               tile_size=16, fov=90, check_gradients=True, tmin=0.01):
     """
     Test tetrahedra rendering by comparing JAX and PyTorch implementations.
@@ -108,10 +108,10 @@ def test_tetrahedra_rendering(vertices, indices, vertex_color, tet_density, view
         # Detach and enable gradients
         vertices = vertices.detach().requires_grad_(True)
         tet_density = tet_density.detach().requires_grad_(True)
-        vertex_color = vertex_color.detach().requires_grad_(True)
+        cell_values = cell_values.detach().requires_grad_(True)
     model = lambda x: x
     model.vertices = vertices
-    model.vertex_color = vertex_color
+    model.cell_values = cell_values
     model.tet_density = tet_density
     model.indices = indices
     model.scene_scaling = 1
@@ -120,17 +120,17 @@ def test_tetrahedra_rendering(vertices, indices, vertex_color, tet_density, view
     model.feature_dim = 7
     def get_cell_values(camera, mask=None, all_circumcenters=None):
         if mask is not None:
-            return tet_density, vertex_color[mask]
+            return tet_density, cell_values[mask]
         else:
-            return tet_density, vertex_color
+            return tet_density, cell_values
     model.get_cell_values = get_cell_values
     model.mask_values = False
 
-    render_pkg = render(camera, model, tile_size=tile_size, min_t=tmin, ladder_p=1, pre_multi=1, clip_multi=None)
+    render_pkg = render(camera, model, tile_size=tile_size, min_t=tmin, ladder_p=1, pre_multi=1, clip_multi=0)
     torch_image = render_pkg['render'].permute(1, 2, 0)
     
-    vc = vertex_color[:, 1:].reshape(-1, 4, 3)
-    td = vertex_color[:, :1]
+    vc = cell_values[:, 1:].reshape(-1, 6)
+    td = cell_values[:, :1]
     jax_image, extras = tetra_quad.render_camera(
         vertices.detach().cpu().numpy(), indices.cpu().numpy(),
         vc.detach().cpu().numpy(),
@@ -175,9 +175,9 @@ def test_tetrahedra_rendering(vertices, indices, vertex_color, tet_density, view
         
         # Store PyTorch gradients
         results['torch_vertex_grad'] = vertices.grad.clone().cpu().numpy()
-        # ic(vertex_color.grad, tet_density.grad)
-        vc_grad = vertex_color.grad.clone().cpu().numpy()
-        results['torch_vertex_color_grad'] = vc_grad[:, 1:]
+        # ic(cell_values.grad, tet_density.grad)
+        vc_grad = cell_values.grad.clone().cpu().numpy()
+        results['torch_cell_values_grad'] = vc_grad[:, 1:]
         results['torch_tet_density_grad'] = vc_grad[:, :1]
         
         def render_fn(verts_and_rgbs):
@@ -196,7 +196,7 @@ def test_tetrahedra_rendering(vertices, indices, vertex_color, tet_density, view
             return img[..., :3].sum()
 
         # Compute JAX gradients using jacrev
-        jax_verts_grad, jax_vertex_color_grad, jax_tet_density_grad = grad(render_fn)((
+        jax_verts_grad, jax_cell_values_grad, jax_tet_density_grad = grad(render_fn)((
             vertices.detach().cpu().numpy(),
             vc.detach().cpu().numpy(),
             td.detach().cpu().numpy()
@@ -204,12 +204,12 @@ def test_tetrahedra_rendering(vertices, indices, vertex_color, tet_density, view
             
         # Compute JAX gradients (assuming tetra_quad.render_camera returns gradients)
         results['jax_vertex_grad'] = np.array(jax_verts_grad)
-        results['jax_vertex_color_grad'] = np.array(jax_vertex_color_grad).reshape(-1, 12)
+        results['jax_cell_values_grad'] = np.array(jax_cell_values_grad).reshape(-1, 6)
         results['jax_tet_density_grad'] = np.array(jax_tet_density_grad)
 
         results['dist_loss_err'] = np.abs(results['torch_dist_loss'] - results['jax_dist_loss'])
         results['vertex_err'] = np.abs(results['torch_vertex_grad'] - results['jax_vertex_grad'])
-        results['vertex_color_err'] = np.abs(results['torch_vertex_color_grad'] - results['jax_vertex_color_grad'])
+        results['cell_values_err'] = np.abs(results['torch_cell_values_grad'] - results['jax_cell_values_grad'])
         results['tet_density_err'] = np.abs(results['torch_tet_density_grad'] - results['jax_tet_density_grad'])
 
     return results
