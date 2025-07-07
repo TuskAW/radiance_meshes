@@ -149,7 +149,6 @@ def render(camera: Camera, model, cell_values=None, tile_size=16, min_t=0.1,
             with torch.no_grad():
                 tet_sens, sensitivity = topo_utils.compute_vertex_sensitivity(model.indices[mask],
                                                                             vertices, normed_cc, True)
-                                                                            # vertices, normed_cc, model.contract_vertices)
                 scaling = clip_multi*sensitivity.reshape(-1, 1).clip(min=1e-5)
             vertices = ClippedGradients.apply(vertices, scaling)
 

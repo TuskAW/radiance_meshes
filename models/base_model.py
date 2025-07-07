@@ -65,7 +65,7 @@ class BaseModel(nn.Module):
 
     @property
     def num_int_verts(self):
-        return self.contracted_vertices.shape[0]
+        return self.interior_vertices.shape[0]
 
     def get_circumcenters(self):
         circumcenter =  pre_calc_cell_values(

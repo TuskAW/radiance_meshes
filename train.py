@@ -103,8 +103,6 @@ args.vert_lr_delay = 0
 args.vertices_lr = 1e-4
 args.final_vertices_lr = 1e-6
 args.vertices_lr_delay_multi = 1e-8
-args.vertices_beta = [0.9, 0.99]
-args.contract_vertices = False
 args.clip_multi = 0
 args.delaunay_start = 30000
 
@@ -133,7 +131,6 @@ args.percent_total = 0.30
 args.diff_threshold = 0.0
 args.clone_min_alpha = 0.025
 args.clone_min_density = 0.025
-args.clone_min_ratio = 1.0
 
 args.lambda_ssim = 0.2
 args.base_min_t = 0.2
@@ -142,6 +139,8 @@ args.data_device = 'cpu'
 args.lambda_tv = 0.0
 args.density_threshold = 0.001
 args.alpha_threshold = 0.001
+args.total_thresh = 0.05
+args.within_thresh = 0.4
 
 args.voxel_size = 0.01
 

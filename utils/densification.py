@@ -229,12 +229,12 @@ def apply_densification(
     mask_alive = (alphas >= args.clone_min_alpha) & (tet_density.reshape(-1) >= args.clone_min_density)
     # area = topo_utils.tet_volumes(model.vertices[model.indices])
     # ratio = safe_math.safe_div(alphas, area)
-    # mask_alive = ratio > args.clone_min_ratio
     total_var[~mask_alive] = 0
     within_var[~mask_alive] = 0
     between_var[~mask_alive] = 0
     # total_var = (total_var - between_var).clip(min=0)
 
+    """
     target_addition = min(target_addition, stats.tet_view_count.shape[0])
     if target_addition < 0:
         return
@@ -271,6 +271,10 @@ def apply_densification(
 
     split_mask = within_mask | between_mask
     clone_mask = split_mask | grow_mask
+    """
+    within_mask = (within_var > args.within_thresh)
+    total_mask = (total_var > args.total_thresh)
+    clone_mask = within_mask | total_mask
 
     # ---------- debug renders -------------------------------------------------
     if args.output_path is not None:
@@ -320,16 +324,11 @@ def apply_densification(
                     **args.as_dict())
 
     # ---------- velocity-based additions -------------------------------------
-    raw_verts = model.contracted_vertices
-    vstate = tet_optim.vertex_optim.get_state_by_name("contracted_vertices")
+    raw_verts = model.interior_vertices
+    vstate = tet_optim.vertex_optim.get_state_by_name("interior_vertices")
     velocity = vstate["exp_avg"] * args.speed_mul
 
-    if model.contract_vertices:
-        J_d = topo_utils.contraction_jacobian_d_in_chunks(
-            model.vertices[:raw_verts.shape[0]]).view(-1, 1)
-        speed = torch.linalg.norm(velocity * J_d, dim=1)
-    else:
-        speed = torch.linalg.norm(velocity, dim=1)
+    speed = torch.linalg.norm(velocity, dim=1)
         
     if args.clone_velocity > 0:
         new_verts = (raw_verts + velocity)[speed > args.clone_velocity]
@@ -343,8 +342,8 @@ def apply_densification(
     torch.cuda.empty_cache()
 
     print(
-        f"#Grow: {grow_mask.sum():4d} #Split: {split_mask.sum():4d} | "
-        f"T_Total: {target_total:4d} T_Within: {target_within:4d} T_Between: {target_between:4d} | "
+        f"#Within: {within_mask.sum():4d} #Total: {total_mask.sum():4d} | "
+        # f"T_Total: {target_total:4d} T_Within: {target_within:4d} T_Between: {target_between:4d} | "
         f"Total Avg: {total_var.mean():.4f} Within Avg: {within_var.mean():.4f} Between Avg: {between_var.mean():.4f}  | "
         f"By Vel: {num_cloned}"
     )

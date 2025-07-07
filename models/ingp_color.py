@@ -38,7 +38,6 @@ class Model(BaseModel):
                  ext_vertices: torch.Tensor,
                  center: torch.Tensor,
                  scene_scaling: float,
-                 contract_vertices=True,
                  density_offset=-1,
                  current_sh_deg=2,
                  max_sh_deg=2,
@@ -64,16 +63,12 @@ class Model(BaseModel):
         self.register_buffer('ext_vertices', ext_vertices.to(self.device))
         self.register_buffer('center', center.reshape(1, 3))
         self.register_buffer('scene_scaling', torch.tensor(float(scene_scaling), device=self.device))
-        self.contract_vertices = contract_vertices
-        if self.contract_vertices:
-            self.contracted_vertices = nn.Parameter(self.contract(vertices.detach()))
-        else:
-            self.contracted_vertices = nn.Parameter(vertices.detach())
+        self.interior_vertices = nn.Parameter(vertices.detach())
         self.update_triangulation()
 
     @property
     def num_int_verts(self):
-        return self.contracted_vertices.shape[0]
+        return self.interior_vertices.shape[0]
 
     def get_circumcenters(self):
         circumcenter =  pre_calc_cell_values(
@@ -184,16 +179,13 @@ class Model(BaseModel):
         config_path = path / "config.json"
         config = Args.load_from_json(str(config_path))
         ckpt = torch.load(ckpt_path)
-        vertices = ckpt['contracted_vertices']
+        vertices = ckpt['interior_vertices']
         indices = ckpt["indices"]  # shape (N,4)
         del ckpt["indices"]
         print(f"Loaded {vertices.shape[0]} vertices")
-        temp = config.contract_vertices
-        config.contract_vertices = False
         ext_vertices = ckpt['ext_vertices']
         model = Model(vertices.to(device), ext_vertices, ckpt['center'], ckpt['scene_scaling'], **config.as_dict())
         model.load_state_dict(ckpt)
-        model.contract_vertices = temp
         model.min_t = model.scene_scaling * config.base_min_t
         model.indices = torch.as_tensor(indices).cuda()
         return model
@@ -243,10 +235,7 @@ class Model(BaseModel):
 
     @property
     def vertices(self):
-        if self.contract_vertices:
-            verts = self.inv_contract(self.contracted_vertices)
-        else:
-            verts = self.contracted_vertices
+        verts = self.interior_vertices
         return torch.cat([verts, self.ext_vertices])
 
     def sh_up(self):
@@ -329,9 +318,9 @@ class TetOptimizer:
             {"params": model.backbone.gradient_net.parameters(),  "lr": network_lr, "name": "gradient"},
             {"params": model.backbone.sh_net.parameters(),        "lr": network_lr,       "name": "sh"},
         ], ignore_param_list=[], betas=[0.9, 0.999])
-        self.vert_lr_multi = 1 if model.contract_vertices else float(model.scene_scaling.cpu())
+        self.vert_lr_multi = float(model.scene_scaling.cpu())
         self.vertex_optim = optim.CustomAdam([
-            {"params": [model.contracted_vertices], "lr": self.vert_lr_multi*vertices_lr, "name": "contracted_vertices"},
+            {"params": [model.interior_vertices], "lr": self.vert_lr_multi*vertices_lr, "name": "interior_vertices"},
         ])
         self.model = model
         self.vertex_rgbs_param_grad = None
@@ -395,22 +384,20 @@ class TetOptimizer:
                 lr = self.encoder_scheduler_args(iteration)
                 param_group['lr'] = lr
         for param_group in self.vertex_optim.param_groups:
-            if param_group["name"] == "contracted_vertices":
+            if param_group["name"] == "interior_vertices":
                 lr = self.vertex_scheduler_args(iteration)
                 self.vertex_lr = lr
                 param_group['lr'] = lr
 
     def add_points(self, new_verts: torch.Tensor, raw_verts=False):
-        if self.model.contract_vertices and not raw_verts:
-            new_verts = self.model.contract(new_verts)
-        self.model.contracted_vertices = self.vertex_optim.cat_tensors_to_optimizer(dict(
-            contracted_vertices = new_verts
-        ))['contracted_vertices']
+        self.model.interior_vertices = self.vertex_optim.cat_tensors_to_optimizer(dict(
+            interior_vertices = new_verts
+        ))['interior_vertices']
         self.model.update_triangulation()
 
     def remove_points(self, keep_mask: torch.Tensor):
-        keep_mask = keep_mask[:self.model.contracted_vertices.shape[0]]
-        self.model.contracted_vertices = self.vertex_optim.prune_optimizer(keep_mask)['contracted_vertices']
+        keep_mask = keep_mask[:self.model.interior_vertices.shape[0]]
+        self.model.interior_vertices = self.vertex_optim.prune_optimizer(keep_mask)['interior_vertices']
         self.model.update_triangulation()
 
     @torch.no_grad()
