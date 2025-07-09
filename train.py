@@ -75,6 +75,7 @@ args.render_train = False
 args.max_sh_deg = 3
 args.sh_interval = 0
 args.sh_step = 1
+args.bake_model = True
 
 # iNGP Settings
 args.encoding_lr = 3e-3
@@ -82,23 +83,23 @@ args.final_encoding_lr = 3e-4
 args.network_lr = 1e-3
 args.final_network_lr = 1e-4
 args.scale_multi = 0.35 # chosen such that 96% of the distribution is within the sphere 
-args.log2_hashmap_size = 22
+args.log2_hashmap_size = 24
 args.per_level_scale = 2
 args.L = 10
 args.density_offset = -4
 args.weight_decay = 0.25
 args.final_weight_decay = 0.01
-args.hashmap_dim = 16
+args.hashmap_dim = 4
 args.percent_alpha = 0.02 # preconditioning
 args.spike_duration = 500
-args.hidden_dim = 256
-args.sh_hidden_dim = 512
+args.hidden_dim = 64
+args.sh_hidden_dim = 256
 
-args.dg_init=1e-4
-args.g_init=1.0
-args.s_init=1e-4
+args.dg_init=0.1
+args.g_init=0.1
+args.s_init=0.1
 args.d_init=0.1
-args.c_init=0.8
+args.c_init=0.1
 
 # Vertex Settings
 args.lr_delay = 0
@@ -276,7 +277,7 @@ for iteration in progress_bar:
     if do_delaunay or do_freeze:
         st = time.time()
         tet_optim.update_triangulation(density_threshold=args.density_threshold, alpha_threshold=args.alpha_threshold, high_precision=do_freeze)
-        if do_freeze:
+        if do_freeze and args.bake_model:
             del tet_optim
             model, tet_optim = freeze_model(model, **args.as_dict())
             gc.collect()
@@ -377,8 +378,6 @@ for iteration in progress_bar:
                 device      = device,
                 sample_cam  = sample_camera,
                 sample_image= sample_image,     # whatever RGB debug frame you use
-                target_addition= target_addition
-
             )
             # tet_optim.prune(**args.as_dict())
             gc.collect()

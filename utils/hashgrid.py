@@ -63,12 +63,15 @@ class HashEmbedderOptimized(nn.Module):
 
         self.hash_mask = (1 << log2_hashmap_size) - 1
         self.out_dim = n_levels * n_features_per_level
-        self.n_output_dims = self.out_dim  # backwards compat
+        self.n_output_dims = self.out_dim
 
     def ingp_hash(self, coords):
-        xor_result = torch.zeros_like(coords[..., 0])
+        UINT32_MASK = 0xFFFFFFFF
+        xor_result = torch.zeros_like(coords[..., 0]).clone()
         for i in range(coords.shape[-1]):
-             xor_result ^= coords[..., i] * self.primes[i]
+            term = (coords[..., i] * self.primes[i]) & UINT32_MASK
+            xor_result ^= term
+
         return xor_result & self.hash_mask
 
     def get_voxel_vertices(self, x, level_idx):
@@ -89,7 +92,6 @@ class HashEmbedderOptimized(nn.Module):
         num_voxels = resolution ** 3
 
         if self.use_conditional_hashing and (num_voxels <= hashmap_size):
-            # --- Collision-free path: Use modulo for wrap-around ---
             res_sq = res_long * res_long
             wrapped_indices = voxel_indices % res_long
             hashed_voxel_indices = (
@@ -98,7 +100,6 @@ class HashEmbedderOptimized(nn.Module):
                 wrapped_indices[..., 2] * res_sq
             )
         else:
-            # --- Standard iNGP hash: Use raw integer indices ---
             hashed_voxel_indices = self.ingp_hash(voxel_indices)
         
         return fracs, hashed_voxel_indices
@@ -124,10 +125,6 @@ class HashEmbedderOptimized(nn.Module):
         return torch.cat(x_embedded_all, dim=-1)
 
     def forward_in_chunks(self, x, chunk_size=548576):
-    # def forward_in_chunks(self, x, chunk_size=65536):
-        """
-        Same as forward(), but processes 'x' in chunks to reduce memory usage.
-        """
         outputs = []
         start = 0
         while start < x.shape[0]:

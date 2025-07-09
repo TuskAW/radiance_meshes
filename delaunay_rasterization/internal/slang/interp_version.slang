@@ -139,7 +139,6 @@ bool evaluate_tetra_interp(
         */
         //*
         float dc_dt = dot(g.grd, ray_d);
-        float f0 = dot(g.grd, v_enter);
         float offset = dot(ray_o - verts[0], g.grd);
         float3 final_color = {
             integrate_channel(enter, exit, g.base_color.r + offset, dc_dt, g.density),

@@ -28,7 +28,7 @@ from simple_knn._C import distCUDA2
 from utils import mesh_util
 from utils.model_util import *
 from models.base_model import BaseModel
-from muon import MuonWithAuxAdam
+from muon import SingleDeviceMuonWithAuxAdam
 
 torch.set_float32_matmul_precision('high')
 
@@ -333,7 +333,7 @@ class TetOptimizer:
                 **params
             )
             return [a, b]
-        self.net_optim = MuonWithAuxAdam(
+        self.net_optim = SingleDeviceMuonWithAuxAdam(
             process(model.backbone.density_net) + \
             process(model.backbone.color_net) + \
             process(model.backbone.gradient_net) + \

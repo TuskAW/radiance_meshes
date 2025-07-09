@@ -180,7 +180,7 @@ class iNGPDW(nn.Module):
                 nn.SELU(inplace=True),
                 nn.Linear(hidden_dim, n)
             )
-            gain = nn.init.calculate_gain('relu')  # for example, if using ReLU activations
+            gain = nn.init.calculate_gain('relu')
             network.apply(lambda m: init_linear(m, gain))
             return network
 

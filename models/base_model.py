@@ -132,7 +132,9 @@ class BaseModel(nn.Module):
 
         vertices = self.vertices
         indices = self.indices
-        circumcenters, density, base_color_v0_raw, normed_grd, sh = self.compute_features(offset=True)
+        circumcenters, density, base_color_v0_raw, normed_grd, sh = self.compute_features(offset=False)
+        radius = torch.linalg.norm(vertices[indices[:, 0]] - circumcenters.reshape(-1, 3), dim=-1)
+        normed_grd = safe_div(normed_grd.reshape(-1, 3), radius.reshape(-1, 1))
 
         base_color_v0_raw = base_color_v0_raw.cpu().numpy().astype(np.float32)
         grds = normed_grd.reshape(-1, 3).cpu().numpy().astype(np.float32)
