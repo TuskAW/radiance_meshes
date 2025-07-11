@@ -81,7 +81,7 @@ def render_err(gt_image, camera: Camera, model, tile_size=16,
     tet_alive = torch.zeros((indices.shape[0]), dtype=bool, device=device)
     ray_jitter = 0.5*torch.ones((camera.image_height, camera.image_width, 2), device=device)
 
-    mod = slang_modules.alpha_blend_shaders_linear if model.linear else slang_modules.alpha_blend_shaders_interp
+    mod = slang_modules.alpha_blend_shaders_interp
     assert (render_grid.tile_height, render_grid.tile_width) in mod, (
         'Alpha Blend Shader was not compiled for this tile'
         f' {render_grid.tile_height}x{render_grid.tile_width} configuration, available configurations:'

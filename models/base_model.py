@@ -17,7 +17,7 @@ from utils.safe_math import safe_log, safe_exp
 from utils.train_util import get_expon_lr_func, SpikingLR
 from utils import mesh_util
 from utils.args import Args
-
+from delaunay_rasterization.internal.render_err import render_err
 
 class BaseModel(nn.Module):
 
@@ -165,12 +165,37 @@ class BaseModel(nn.Module):
         tinyplypy.write_ply(str(path), data_dict, is_binary=True)
 
     @torch.no_grad
-    def extract_mesh(self, path, density_threshold=0.5, alpha_threshold=0.2):
+    def extract_mesh(self, cameras, path, tile_size=16, contrib_threshold=0.1, density_threshold=0.5, alpha_threshold=0.2, **kwargs):
         path.mkdir(exist_ok=True, parents=True)
-        verts = self.vertices
-        tet_density = self.calc_tet_density()
+        n_tets = self.indices.shape[0]
+        peak_contrib = torch.zeros((n_tets), device=self.device)
+
+        for cam in cameras:
+            target = cam.original_image.cuda()
+
+            image_votes, extras = render_err(
+                target, cam, self,
+                scene_scaling=self.scene_scaling,
+                tile_size=tile_size,
+                lambda_ssim=0
+            )
+
+            tc = extras["tet_count"]
+            
+            # --- Create a single mask for valid updates ---
+            # Mask for tets that have a reasonable number of samples in the current view
+            # --- Moments (s-1: sum of T, s1: sum of err, s2: sum of err^2)
+            image_T, image_err, image_err1 = image_votes[:, 0], image_votes[:, 1], image_votes[:, 2]
+            # total_T_p, image_err, image_err1 = image_votes[:, 3], image_votes[:, 4], image_votes[:, 5]
+            _, image_Terr, image_ssim = image_votes[:, 2], image_votes[:, 4], image_votes[:, 5]
+            N = tc
+            peak_contrib = torch.maximum(image_T / N.clip(min=1), peak_contrib)
         tet_alpha = self.calc_tet_alpha(mode="min")
-        mask = (tet_density > density_threshold) | (tet_alpha > alpha_threshold)
+        mask = (peak_contrib > contrib_threshold) | (tet_alpha > alpha_threshold)
+
+        verts = self.vertices
+        # tet_density = self.calc_tet_density()
+        # mask = (tet_density > density_threshold) | (tet_alpha > alpha_threshold)
 
         circumcenters, density, rgb, grd, sh = self.compute_features(offset=False)
         rgb = rgb[mask].detach()
