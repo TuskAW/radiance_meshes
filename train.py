@@ -143,8 +143,8 @@ args.data_device = 'cpu'
 args.lambda_tv = 0.0
 args.density_threshold = 0.001
 args.alpha_threshold = 0.001
-args.total_thresh = 0.025
-args.within_thresh = 0.4
+args.total_thresh = 0.08
+args.within_thresh = 0.6
 
 args.voxel_size = 0.01
 
@@ -267,6 +267,9 @@ video_writer = cv2.VideoWriter(str(args.output_path / "training.mp4"), cv2.CAP_F
 tet_optim.build_tv()
 progress_bar = tqdm(range(args.iterations))
 torch.cuda.empty_cache()
+
+densification_cam_buffer = []
+
 for iteration in progress_bar:
     delaunay_interval = args.delaunay_interval if iteration < args.delaunay_start else 100
     do_delaunay = iteration % delaunay_interval == 0 and iteration < args.freeze_start
@@ -289,6 +292,7 @@ for iteration in progress_bar:
         random.shuffle(inds)
         psnrs.append([])
     ind = inds.pop()
+    densification_cam_buffer.append(ind)
     camera = train_cameras[ind]
     target = camera.original_image.cuda()
 
@@ -363,7 +367,8 @@ for iteration in progress_bar:
 
     if do_cloning and not model.frozen:
         with torch.no_grad():
-            sampled_cams = [train_cameras[i] for i in densification_sampler.nextids()]
+            # sampled_cams = [train_cameras[i] for i in densification_sampler.nextids()]
+            sampled_cams = [train_cameras[i] for i in np.unique(densification_cam_buffer)]
 
             model.eval()
             stats = collect_render_stats(sampled_cams, model, args, device)
@@ -383,6 +388,7 @@ for iteration in progress_bar:
             # tet_optim.prune(**args.as_dict())
             gc.collect()
             torch.cuda.empty_cache()
+            densification_cam_buffer = []
 
     # Save checkpoints at specified iterations
     if iteration in args.checkpoint_iterations:

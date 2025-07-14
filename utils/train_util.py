@@ -276,7 +276,7 @@ class TwoPhaseLR:
         # Phase 1: Spiking with decaying cosine annealing
         if i < self.start_i:
             return get_expon_lr_func(self.lr_peak, self.lr_trough, max_steps=self.start_i)(i)
-        elif self.start_i < i < self.settle_i:
+        elif self.start_i <= i <= self.settle_i:
             cycle = math.floor((i-self.start_i) / self.period_i)
             t_cycle = (i-self.start_i) % self.period_i
             
