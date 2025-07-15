@@ -187,7 +187,8 @@ class Model(BaseModel):
         ext_vertices = ckpt['ext_vertices']
         model = Model(vertices.to(device), ext_vertices, ckpt['center'], ckpt['scene_scaling'], **config.as_dict())
         model.load_state_dict(ckpt)
-        model.min_t = model.scene_scaling * config.base_min_t
+        # model.min_t = model.scene_scaling * config.base_min_t
+        model.min_t = config.base_min_t
         model.indices = torch.as_tensor(indices).cuda()
         return model
 
