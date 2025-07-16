@@ -53,7 +53,7 @@ class BaseModel(nn.Module):
                 dvrgbs = activate_output(camera.camera_center.to(self.device),
                                          density, rgb, grd, sh, indices[start:end],
                                          circumcenters,
-                                         vertices, self.current_sh_deg, self.max_sh_deg)
+                                         vertices, self.max_sh_deg, self.max_sh_deg)
                 normed_cc.append(normalized)
                 outputs.append(dvrgbs)
             features = torch.cat(outputs, dim=0)

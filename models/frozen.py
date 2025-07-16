@@ -272,7 +272,6 @@ def bake_from_model(base_model, *, detach: bool = True, chunk_size: int = 408_57
         center=base_model.center.detach().to(device),
         scene_scaling=base_model.scene_scaling.detach().to(device),
         density_offset=base_model.density_offset,
-        current_sh_deg=base_model.current_sh_deg,
         max_sh_deg=base_model.max_sh_deg,
         chunk_size=chunk_size,
     )
@@ -333,22 +332,12 @@ class FrozenTetOptimizer:
         self.net_optim   = self.optim
         self.vertex_optim = None  # geometry is frozen
 
-        # TV structure (pairs & face areas) for regulariser ----------------
-        if self.lambda_tv > 0:
-            self.pairs, self.face_area = build_tv_struct(
-                self.model.vertices.detach(), self.model.indices, device=model.device
-            )
-
-    # ------------------------------------------------------------------
-    # public helpers ----------------------------------------------------
-    # ------------------------------------------------------------------
     def step(self):
         self.optim.step()
 
     def zero_grad(self):
         self.optim.zero_grad()
 
-    # compatibility shims ------------------------------------------------
     def main_step(self):
         self.step()
 
@@ -366,20 +355,7 @@ class FrozenTetOptimizer:
     def split(self, clone_indices, split_point, split_mode):
         print("Split called on frozen optimizer")
 
-    # ------------------------------------------------------------------
-    # regularisers ------------------------------------------------------
-    # ------------------------------------------------------------------
     def regularizer(self, *_):
-        # wd_loss = self.weight_decay * sum((p ** 2).mean() for p in [
-        #     self.model.density, self.model.rgb, self.model.gradient, self.model.sh
-        # ])
-
-        if self.lambda_density > 0:
-            density = self.model.density.squeeze(-1)
-            density_loss = density.mean()
-        else:
-            density_loss = 0.0
-
         if self.lambda_tv > 0:
             # simple TV on densities as example
             diff = (self.model.density[self.pairs[:, 0]] - self.model.density[self.pairs[:, 1]]).abs()
@@ -387,7 +363,7 @@ class FrozenTetOptimizer:
         else:
             tv_loss = 0.0
 
-        return self.lambda_density * density_loss + self.lambda_tv * tv_loss
+        return self.lambda_tv * tv_loss
 
 def _offload_model_to_cpu(model: nn.Module):
     """Move every parameter & buffer to CPU and drop gradients to free GPU VRAM."""
@@ -403,7 +379,7 @@ def _offload_model_to_cpu(model: nn.Module):
 @torch.no_grad()
 def freeze_model(
     base_model,
-    *,
+    args,
     weight_decay: float = 1e-10,
     lambda_tv:    float = 0.0,
     lambda_density: float = 0.0,
@@ -427,10 +403,7 @@ def freeze_model(
 
     frozen_optim = FrozenTetOptimizer(
         frozen_model,
-        weight_decay=weight_decay,
-        lambda_tv=lambda_tv,
-        lambda_density=lambda_density,
-        **kwargs
+        **args.as_dict()
     )
 
     # free GPU memory used by the big backbone (optional but handy)

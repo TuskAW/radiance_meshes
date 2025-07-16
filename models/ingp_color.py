@@ -2,14 +2,12 @@ import torch
 import math
 from data.camera import Camera
 from utils import optim
-from sh_slang.eval_sh import eval_sh
 from gDel3D.build.gdel3d import Del
 from torch import nn
 from icecream import ic
 
-from utils.topo_utils import calculate_circumcenters_torch, fibonacci_spiral_on_sphere, calc_barycentric, sample_uniform_in_sphere, project_points_to_tetrahedra, contraction_jacobian_d_in_chunks
+from utils.topo_utils import calculate_circumcenters_torch, fibonacci_spiral_on_sphere, calc_barycentric, sample_uniform_in_sphere
 from utils import topo_utils
-from utils.safe_math import safe_exp, safe_div, safe_sqrt
 from utils.contraction import contract_mean_std
 from utils.contraction import contract_points, inv_contract_points
 
@@ -19,13 +17,9 @@ from torch.utils.checkpoint import checkpoint
 from pathlib import Path
 import numpy as np
 from utils.args import Args
-import tinyplypy
-from scipy.spatial import ConvexHull
 from scipy.spatial import  Delaunay
 import open3d as o3d
-from data.types import BasicPointCloud
 from simple_knn._C import distCUDA2
-from utils import mesh_util
 from utils.model_util import *
 from models.base_model import BaseModel
 from muon import SingleDeviceMuonWithAuxAdam
@@ -40,7 +34,6 @@ class Model(BaseModel):
                  center: torch.Tensor,
                  scene_scaling: float,
                  density_offset=-1,
-                 current_sh_deg=2,
                  max_sh_deg=2,
                  glo_dim=0,
                  **kwargs):
@@ -48,14 +41,14 @@ class Model(BaseModel):
         self.device = vertices.device
         self.density_offset = density_offset
         self.max_sh_deg = max_sh_deg
-        self.current_sh_deg = current_sh_deg
         self.dir_offset = torch.tensor([
             [0, 0],
             [math.pi, 0],
         ], device=self.device)
-        sh_dim = ((1+max_sh_deg)**2-1)*3
-        self.backbone = torch.compile(iNGPDW(sh_dim, glo_dim=glo_dim, **kwargs)).to(self.device)
+        self.sh_dim = ((1+max_sh_deg)**2-1)*3
+        self.backbone = torch.compile(iNGPDW(self.sh_dim, glo_dim=glo_dim, **kwargs)).to(self.device)
         self.default_glo = None if glo_dim == 0 else torch.zeros((1, glo_dim), device=self.device)
+        self.glo_dim = glo_dim
         self.chunk_size = 408576
         self.mask_values = True
         self.frozen = False
@@ -94,66 +87,12 @@ class Model(BaseModel):
             dvrgbs = activate_output(camera.camera_center.to(self.device),
                                      density, rgb, grd, sh, indices[start:end],
                                      circumcenters,
-                                     vertices, self.current_sh_deg, self.max_sh_deg)
+                                     vertices, self.max_sh_deg, self.max_sh_deg)
             normed_cc.append(normalized)
             outputs.append(dvrgbs)
         features = torch.cat(outputs, dim=0)
         normed_cc = torch.cat(normed_cc, dim=0)
         return normed_cc, features
-
-    @staticmethod
-    def init_from_pcd(point_cloud, cameras, device, max_sh_deg,
-                      voxel_size=0.00, **kwargs):
-        torch.manual_seed(2)
-
-        ccenters = torch.stack([c.camera_center.reshape(3) for c in cameras], dim=0).to(device)
-        center = ccenters.mean(dim=0)
-        scaling = torch.linalg.norm(ccenters - center.reshape(1, 3), dim=1, ord=torch.inf).max()
-        print(f"Scene scaling: {scaling}. Center: {center}")
-
-        vertices = torch.as_tensor(point_cloud.points).float()
-
-        dist = torch.clamp_min(distCUDA2(vertices.cuda()), 0.0000001).sqrt().cpu()
-
-        # vertices = vertices.reshape(-1, 1, 3).expand(-1, init_repeat, 3)
-        # vertices = vertices + torch.randn(*vertices.shape) * dist.reshape(-1, 1, 1).clip(min=0.01)
-        # vertices = vertices.reshape(-1, 3)
-
-        # Convert BasicPointCloud to Open3D PointCloud
-        o3d_pcd = o3d.geometry.PointCloud()
-        o3d_pcd.points = o3d.utility.Vector3dVector(vertices.numpy())
-
-        # Perform voxel downsampling
-        if voxel_size > 0:
-            o3d_pcd = o3d_pcd.voxel_down_sample(voxel_size=voxel_size)
-
-        N = point_cloud.points.shape[0]
-        vertices = torch.as_tensor(np.asarray(o3d_pcd.points)).float()
-        vertices = vertices + torch.randn(*vertices.shape) * 1e-3
-
-        # add sphere
-        pcd_scaling = torch.linalg.norm(vertices - center.cpu().reshape(1, 3), dim=1, ord=2).max()
-        new_radius = pcd_scaling.cpu().item()
-
-        # vertices = sample_uniform_in_sphere(10000, 3, base_radius=0, radius=new_radius, device='cpu') + center.reshape(1, 3).cpu()
-
-        # vertices = vertices + torch.randn(*vertices.shape) * 1e-3
-        # v = Del(vertices.shape[0])
-        # indices_np, prev = v.compute(vertices.detach().cpu().double())
-        # indices_np = indices_np.numpy()
-        # indices_np = indices_np[(indices_np < vertices.shape[0]).all(axis=1)]
-        # vertices = vertices[indices_np].mean(dim=1)
-        # vertices = vertices + torch.randn(*vertices.shape) * 1e-3
-
-        # within_sphere = sample_uniform_in_sphere(10000, 3, base_radius=new_radius, radius=new_radius, device='cpu') + center.reshape(1, 3).cpu()
-        # vertices = torch.cat([vertices, within_sphere], dim=0)
-        num_ext = 1000
-        ext_vertices = fibonacci_spiral_on_sphere(num_ext, new_radius, device='cpu') + center.reshape(1, 3).cpu()
-        num_ext = ext_vertices.shape[0]
-
-        model = Model(vertices.cuda(), ext_vertices, center, scaling,
-                      max_sh_deg=max_sh_deg, **kwargs)
-        return model
 
     def compute_batch_features(self, vertices, indices, start, end, circumcenters=None, glo=None):
         if circumcenters is None:
@@ -239,9 +178,6 @@ class Model(BaseModel):
         verts = self.interior_vertices
         return torch.cat([verts, self.ext_vertices])
 
-    def sh_up(self):
-        self.current_sh_deg = min(self.max_sh_deg, self.current_sh_deg+1)
-
     @torch.no_grad()
     def update_triangulation(self, high_precision=False, density_threshold=0.0, alpha_threshold=0.0):
         torch.cuda.empty_cache()
@@ -268,6 +204,60 @@ class Model(BaseModel):
     def __len__(self):
         return self.vertices.shape[0]
         
+
+    @staticmethod
+    def init_from_pcd(point_cloud, cameras, device, max_sh_deg,
+                      voxel_size=0.00, **kwargs):
+        torch.manual_seed(2)
+
+        ccenters = torch.stack([c.camera_center.reshape(3) for c in cameras], dim=0).to(device)
+        center = ccenters.mean(dim=0)
+        scaling = torch.linalg.norm(ccenters - center.reshape(1, 3), dim=1, ord=torch.inf).max()
+        print(f"Scene scaling: {scaling}. Center: {center}")
+
+        vertices = torch.as_tensor(point_cloud.points).float()
+
+        dist = torch.clamp_min(distCUDA2(vertices.cuda()), 0.0000001).sqrt().cpu()
+
+        # vertices = vertices.reshape(-1, 1, 3).expand(-1, init_repeat, 3)
+        # vertices = vertices + torch.randn(*vertices.shape) * dist.reshape(-1, 1, 1).clip(min=0.01)
+        # vertices = vertices.reshape(-1, 3)
+
+        # Convert BasicPointCloud to Open3D PointCloud
+        o3d_pcd = o3d.geometry.PointCloud()
+        o3d_pcd.points = o3d.utility.Vector3dVector(vertices.numpy())
+
+        # Perform voxel downsampling
+        if voxel_size > 0:
+            o3d_pcd = o3d_pcd.voxel_down_sample(voxel_size=voxel_size)
+
+        N = point_cloud.points.shape[0]
+        vertices = torch.as_tensor(np.asarray(o3d_pcd.points)).float()
+        vertices = vertices + torch.randn(*vertices.shape) * 1e-3
+
+        # add sphere
+        pcd_scaling = torch.linalg.norm(vertices - center.cpu().reshape(1, 3), dim=1, ord=2).max()
+        new_radius = pcd_scaling.cpu().item()
+
+        # vertices = sample_uniform_in_sphere(10000, 3, base_radius=0, radius=new_radius, device='cpu') + center.reshape(1, 3).cpu()
+
+        # vertices = vertices + torch.randn(*vertices.shape) * 1e-3
+        # v = Del(vertices.shape[0])
+        # indices_np, prev = v.compute(vertices.detach().cpu().double())
+        # indices_np = indices_np.numpy()
+        # indices_np = indices_np[(indices_np < vertices.shape[0]).all(axis=1)]
+        # vertices = vertices[indices_np].mean(dim=1)
+        # vertices = vertices + torch.randn(*vertices.shape) * 1e-3
+
+        # within_sphere = sample_uniform_in_sphere(10000, 3, base_radius=new_radius, radius=new_radius, device='cpu') + center.reshape(1, 3).cpu()
+        # vertices = torch.cat([vertices, within_sphere], dim=0)
+        num_ext = 1000
+        ext_vertices = fibonacci_spiral_on_sphere(num_ext, new_radius, device='cpu') + center.reshape(1, 3).cpu()
+        num_ext = ext_vertices.shape[0]
+
+        model = Model(vertices.cuda(), ext_vertices, center, scaling,
+                      max_sh_deg=max_sh_deg, **kwargs)
+        return model
 
 class TetOptimizer:
     def __init__(self,

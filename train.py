@@ -20,7 +20,7 @@ from utils.train_util import *
 # from models.vertex_color import Model, TetOptimizer
 from models.ingp_color import Model, TetOptimizer
 # from models.ingp_linear import Model, TetOptimizer
-from models.frozen import freeze_model
+from models.frozen_features import freeze_model
 from fused_ssim import fused_ssim
 from pathlib import Path, PosixPath
 from utils.args import Args
@@ -84,6 +84,7 @@ args.glo_lr = 1e-2
 args.glo_network_lr = 5e-5
 
 # iNGP Settings
+args.base_resolution = 16
 args.encoding_lr = 3e-3
 args.final_encoding_lr = 3e-5
 args.network_lr = 1e-3
@@ -118,6 +119,8 @@ args.delaunay_start = 30000
 args.freeze_start = 16000
 args.freeze_lr = 5e-3
 args.final_freeze_lr = 1e-4
+args.feature_lr = 1e-3
+args.final_feature_lr = 1e-4
 
 # Distortion Settings
 args.lambda_dist = 0
@@ -148,8 +151,8 @@ args.data_device = 'cpu'
 args.lambda_tv = 0.0
 args.density_threshold = 0.001
 args.alpha_threshold = 0.001
-args.total_thresh = 0.08
-args.within_thresh = 0.6
+args.total_thresh = 0.025
+args.within_thresh = 0.4
 
 args.voxel_size = 0.01
 
@@ -179,7 +182,6 @@ if len(args.ckpt) > 0:
     model = Model.load_ckpt(Path(args.ckpt), device)
 else:
     model = Model.init_from_pcd(scene_info.point_cloud, train_cameras, device,
-                                current_sh_deg = args.max_sh_deg if args.sh_interval <= 0 else 0,
                                 **args.as_dict())
 min_t = args.min_t = args.base_min_t# * model.scene_scaling.item()
 
@@ -296,7 +298,7 @@ for iteration in progress_bar:
         tet_optim.update_triangulation(density_threshold=args.density_threshold, alpha_threshold=args.alpha_threshold, high_precision=do_freeze)
         if do_freeze and args.bake_model:
             del tet_optim
-            model, tet_optim = freeze_model(model, **args.as_dict())
+            model, tet_optim = freeze_model(model, args)
             gc.collect()
             torch.cuda.empty_cache()
 

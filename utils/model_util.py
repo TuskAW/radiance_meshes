@@ -190,9 +190,11 @@ class iNGPDW(nn.Module):
             log2_hashmap_size=log2_hashmap_size, base_resolution=base_resolution,
             finest_resolution=base_resolution*per_level_scale**self.L)
 
+        self.n_output_dims = self.encoding.n_output_dims
+
         def mk_head(n, hidden_dim):
             network = nn.Sequential(
-                nn.Linear(self.encoding.n_output_dims, hidden_dim),
+                nn.Linear(self.n_output_dims, hidden_dim),
                 nn.SELU(inplace=True),
                 nn.Linear(hidden_dim, hidden_dim),
                 nn.SELU(inplace=True),
@@ -203,12 +205,14 @@ class iNGPDW(nn.Module):
             gain = nn.init.calculate_gain('relu')
             network.apply(lambda m: init_linear(m, gain))
             return network
+        self.hidden_dim = hidden_dim
+        self.sh_hidden_dim = sh_hidden_dim
 
         self.density_net   = mk_head(1, hidden_dim)
         self.color_net     = mk_head(3, hidden_dim)
         self.gradient_net  = mk_head(3, hidden_dim)
         self.sh_net        = mk_head(sh_dim, sh_hidden_dim)
-        self.glo_net = GloMLP(glo_dim, self.encoding.n_output_dims)
+        self.glo_net = GloMLP(glo_dim, self.n_output_dims)
 
         with torch.no_grad():
             for network, eps in zip(
@@ -220,7 +224,7 @@ class iNGPDW(nn.Module):
                     nn.init.xavier_uniform_(last.weight, eps)
                     last.bias.zero_()
 
-    def _encode(self, x: torch.Tensor, cr: torch.Tensor):
+    def encode(self, x: torch.Tensor, cr: torch.Tensor):
         x = x.detach()
         output = self.encoding(x).float()
         output = output.reshape(-1, self.dim, self.L)
@@ -230,14 +234,79 @@ class iNGPDW(nn.Module):
                          safe_sqrt(self.per_level_scale * 4*n*cr.reshape(-1, 1, 1)))
         scaling = torch.erf(erf_x)
         output = output * scaling
-        return output
+        return output.reshape(-1, self.L * self.dim)
 
 
     def forward(self, x, cr, glo):
-        output = self._encode(x, cr)
+        h = self.encode(x, cr)
 
-        h = output.reshape(-1, self.L * self.dim)
+        sigma = self.density_net(h)
+        if glo is not None:
+            hglo = self.glo_net(glo, h)
+        else:
+            hglo = h
+        rgb = self.color_net(hglo)
+        field_samples = self.gradient_net(hglo)
+        sh  = self.sh_net(hglo).half()
 
+        rgb = rgb.reshape(-1, 3, 1) + 0.5
+        density = safe_exp(sigma+self.density_offset)
+        # grd = torch.tanh(field_samples.reshape(-1, 1, 3)) / math.sqrt(3)
+        grd = field_samples.reshape(-1, 1, 3)
+        # grd = rgb * torch.tanh(field_samples.reshape(-1, 3, 3))  # shape (T, 3, 3)
+        return density, rgb.reshape(-1, 3), grd, sh
+
+class Heads(nn.Module):
+    def __init__(self, 
+                 n_output_dims,
+                 sh_dim,
+                 glo_dim=0,
+                 scale_multi=0.5,
+                 log2_hashmap_size=16,
+                 base_resolution=16,
+                 per_level_scale=2,
+                 L=10,
+                 hashmap_dim=4,
+                 sh_hidden_dim=64,
+                 hidden_dim=64,
+                 g_init=1,
+                 s_init=1e-4,
+                 d_init=0.1,
+                 c_init=0.6,
+                 density_offset=-4,
+                 **kwargs):
+        super().__init__()
+        self.scale_multi = scale_multi
+        self.L = L
+        self.dim = hashmap_dim
+        self.per_level_scale = per_level_scale
+        self.base_resolution = base_resolution
+        self.density_offset = density_offset
+
+        def mk_head(n, hidden_dim):
+            network = nn.Sequential(
+                nn.Linear(n_output_dims, hidden_dim),
+                nn.SELU(inplace=True),
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.SELU(inplace=True),
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.SELU(inplace=True),
+                nn.Linear(hidden_dim, n)
+            )
+            gain = nn.init.calculate_gain('relu')
+            network.apply(lambda m: init_linear(m, gain))
+            return network
+
+        self.hidden_dim = hidden_dim
+        self.sh_hidden_dim = sh_hidden_dim
+        self.density_net   = mk_head(1, hidden_dim)
+        self.color_net     = mk_head(3, hidden_dim)
+        self.gradient_net  = mk_head(3, hidden_dim)
+        self.sh_net        = mk_head(sh_dim, sh_hidden_dim)
+        self.glo_net = GloMLP(glo_dim, n_output_dims)
+
+    def forward(self, h, glo):
+        h = h.float()
         sigma = self.density_net(h)
         if glo is not None:
             hglo = self.glo_net(glo, h)
