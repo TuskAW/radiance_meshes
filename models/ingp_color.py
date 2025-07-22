@@ -199,7 +199,8 @@ class Model(BaseModel):
         indices = torch.as_tensor(indices_np).cuda()
         vols = tet_volumes(verts[indices])
         reverse_mask = vols < 0
-        indices[reverse_mask] = indices[reverse_mask, [1, 0, 2, 3]]
+        if reverse_mask.sum() > 0:
+            indices[reverse_mask] = indices[reverse_mask][:, [1, 0, 2, 3]]
 
         self.indices = indices
         denom = topo_utils.tet_denom(self.vertices.detach()[self.indices]).detach()

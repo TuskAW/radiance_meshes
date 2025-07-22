@@ -93,6 +93,7 @@ double power_of_circumsphere(
         center = A + relative_circumcenter;
         radius = length(relative_circumcenter);
     }
+    if (radius * radius > 1e4) return -1e20;
 
     // Return the power of the circumsphere
     double3 diff = center - P;

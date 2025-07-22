@@ -9,6 +9,8 @@ from queue import Queue
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+blacklist = ['ckpt', 'output_path']
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Run nerf_test.py experiments from a CSV queue.")
     parser.add_argument("--queue_csv", type=str, default="tests_queue.csv",
@@ -29,7 +31,7 @@ def generate_folder_name(test_params, args, base_dir="output"):
     parts = []
     # Iterate in the order provided by test_params (csv.DictReader preserves header order)
     for key, value in test_params.items():
-        if key == "output_path":
+        if key in blacklist:
             continue
         if key == "dataset_path":
             initials = key

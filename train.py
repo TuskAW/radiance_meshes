@@ -101,6 +101,8 @@ args.freeze_lr = 5e-3
 args.final_freeze_lr = 1e-4
 args.feature_lr = 1e-3
 args.final_feature_lr = 1e-4
+args.fnetwork_lr = 1e-3
+args.final_fnetwork_lr = 1e-5
 
 # Distortion Settings
 args.lambda_dist = 0.0
@@ -180,16 +182,23 @@ args.num_samples = min(len(train_cameras), args.num_samples)
 with (args.output_path / "config.json").open("w") as f:
     json.dump(args.as_dict(), f, cls=CustomEncoder)
 
+final_iter = args.freeze_start if args.bake_model else args.iterations
 device = torch.device('cuda')
 if len(args.ckpt) > 0: 
-    model = Model.load_ckpt(Path(args.ckpt), device)
+    from models.frozen_features import FrozenTetModel, FrozenTetOptimizer
+    # from models.frozen import FrozenTetModel
+    try:
+        model = Model.load_ckpt(Path(args.ckpt), device)
+        tet_optim = TetOptimizer(model, final_iter=final_iter, **args.as_dict())
+    except:
+        model = FrozenTetModel.load_ckpt(Path(args.ckpt), device)
+        tet_optim = FrozenTetOptimizer(model, final_iter=final_iter, **args.as_dict())
 else:
     model = Model.init_from_pcd(scene_info.point_cloud, train_cameras, device,
                                 **args.as_dict())
-min_t = args.min_t = args.base_min_t# * model.scene_scaling.item()
+    tet_optim = TetOptimizer(model, final_iter=final_iter, **args.as_dict())
 
-final_iter = args.freeze_start if args.bake_model else args.iterations
-tet_optim = TetOptimizer(model, final_iter=final_iter, **args.as_dict())
+min_t = args.min_t = args.base_min_t# * model.scene_scaling.item()
 if args.eval:
     sample_camera = test_cameras[args.sample_cam]
     # sample_camera = train_cameras[args.sample_cam]
@@ -212,12 +221,12 @@ S = model.vertices.shape[0]
 
 dschedule = list(range(args.densify_start, args.densify_end, args.densify_interval))
 
-print("Encoding LR")
-xs = list(range(args.iterations))
-ys = [tet_optim.encoder_scheduler_args(x) for x in xs]
-fig = tpl.figure()
-fig.plot(xs, ys, width=150, height=20)
-fig.show()
+# print("Encoding LR")
+# xs = list(range(args.iterations))
+# ys = [tet_optim.encoder_scheduler_args(x) for x in xs]
+# fig = tpl.figure()
+# fig.plot(xs, ys, width=150, height=20)
+# fig.show()
 
 densification_sampler = SimpleSampler(len(train_cameras), args.num_samples)
 

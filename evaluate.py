@@ -31,7 +31,7 @@ if args.use_ply:
 else:
     from models.ingp_color import Model
     from models.frozen_features import FrozenTetModel
-    from models.frozen import FrozenTetModel
+    # from models.frozen import FrozenTetModel
     try:
         model = Model.load_ckpt(args.output_path, device)
     except:

@@ -49,7 +49,7 @@ class FrozenTetModel(BaseModel):
             sh_dim,
             glo_dim=glo_dim,
             **kwargs)).to(self.device)
-        self.features = nn.Parameter(features)
+        self.features = nn.Parameter(features, requires_grad=True)
         self.default_glo = None if glo_dim == 0 else torch.zeros((1, glo_dim), device=self.device)
         self.chunk_size = 408576
         self.mask_values = True
@@ -205,24 +205,19 @@ class FrozenTetOptimizer:
                  model: FrozenTetModel,
                  feature_lr: float=1e-3,
                  final_feature_lr: float=1e-4,
-                 network_lr: float=1e-3,
-                 final_network_lr: float=1e-3,
+                 fnetwork_lr: float=1e-3,
+                 final_fnetwork_lr: float=1e-3,
 
                  weight_decay=1e-10,
                  lr_delay: int = 500,
-                 final_iter: int = 10000,
                  lambda_tv: float = 0.0,
                  lambda_density: float = 0.0,
 
-                 spike_duration: int = 20,
-                 densify_start: int = 2500,
-                 densify_interval: int = 500,
-                 densify_end: int = 15000,
-                 midpoint: int = 2000,
-
                  glo_net_decay: float = 0,
                  glo_network_lr: float = 1e-3,
-                 percent_alpha: float = 0.02,
+
+                 freeze_start: int = 15000,
+                 iterations: int = 30000,
 
                  **kwargs):
         self.weight_decay = weight_decay
@@ -248,10 +243,10 @@ class FrozenTetOptimizer:
             return [a, b]
         glo_p = process(model.backbone.glo_net, glo_network_lr, weight_decay=glo_net_decay) if model.backbone.glo_dim > 0 else []
         self.net_optim = SingleDeviceMuonWithAuxAdam(
-            process(model.backbone.density_net, network_lr) + \
-            process(model.backbone.color_net, network_lr) + \
-            process(model.backbone.gradient_net, network_lr) + \
-            process(model.backbone.sh_net, network_lr) + \
+            process(model.backbone.density_net, fnetwork_lr) + \
+            process(model.backbone.color_net, fnetwork_lr) + \
+            process(model.backbone.gradient_net, fnetwork_lr) + \
+            process(model.backbone.sh_net, fnetwork_lr) + \
             glo_p
         )
         self.feature_optim = torch.optim.RMSprop([
@@ -259,27 +254,28 @@ class FrozenTetOptimizer:
         ], eps=1e-4)
         self.sh_optim = None
         self.model = model
-        self.net_scheduler = get_expon_lr_func(lr_init=network_lr,
-                                                lr_final=final_network_lr,
+        self.freeze_start = freeze_start
+        self.net_scheduler = get_expon_lr_func(lr_init=fnetwork_lr,
+                                                lr_final=final_fnetwork_lr,
                                                 lr_delay_mult=1e-8,
                                                 lr_delay_steps=lr_delay,
-                                                max_steps=final_iter)
+                                                max_steps=iterations - self.freeze_start)
 
         self.feature_scheduler = get_expon_lr_func(lr_init=feature_lr,
                                                 lr_final=final_feature_lr,
                                                 lr_delay_mult=1e-8,
                                                 lr_delay_steps=lr_delay,
-                                                max_steps=final_iter)
+                                                max_steps=iterations - self.freeze_start)
         self.iteration = 0
 
     def update_learning_rate(self, iteration):
         ''' Learning rate scheduling per step '''
         self.iteration = iteration
         for param_group in self.net_optim.param_groups:
-            lr = self.net_scheduler(iteration)
+            lr = self.net_scheduler(iteration - self.freeze_start)
             param_group['lr'] = lr
         for param_group in self.feature_optim.param_groups:
-            lr = self.feature_scheduler(iteration)
+            lr = self.feature_scheduler(iteration - self.freeze_start)
             param_group['lr'] = lr
 
     def step(self):
@@ -311,8 +307,10 @@ class FrozenTetOptimizer:
 
         return self.lambda_tv * tv_loss
 
+    def update_triangulation(self, *_, **__):
+        return None
 
-@torch.no_grad()
+
 def bake_from_model(base_model, args, chunk_size: int = 408_576) -> FrozenTetModel:
     """Convert an existing neural‑field `Model` into a parameter‑only
     `FrozenTetModel`.  All per‑tet features are *evaluated once* through the
