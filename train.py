@@ -20,8 +20,8 @@ from utils.train_util import *
 # from models.vertex_color import Model, TetOptimizer
 from models.ingp_color import Model, TetOptimizer
 # from models.ingp_linear import Model, TetOptimizer
-# from models.frozen_features import freeze_model
-from models.frozen import freeze_model
+from models.frozen_features import freeze_model
+# from models.frozen import freeze_model
 from fused_ssim import fused_ssim
 from pathlib import Path, PosixPath
 from utils.args import Args
@@ -99,10 +99,10 @@ args.delaunay_start = 30000
 args.freeze_start = 16000
 args.freeze_lr = 5e-3
 args.final_freeze_lr = 1e-4
-args.feature_lr = 1e-3
-args.final_feature_lr = 1e-4
+args.feature_lr = 1e-2
+args.final_feature_lr = 1e-3
 args.fnetwork_lr = 1e-3
-args.final_fnetwork_lr = 1e-5
+args.final_fnetwork_lr = 1e-4
 
 # Distortion Settings
 args.lambda_dist = 0.0
@@ -283,7 +283,7 @@ for iteration in progress_bar:
         dt = args.density_threshold if iteration > args.start_threshold else 0
         at = args.alpha_threshold if iteration > args.start_threshold else 0
         tet_optim.update_triangulation(density_threshold=dt, alpha_threshold=at, high_precision=do_freeze)
-        if do_freeze and args.bake_model:
+        if do_freeze and args.bake_model and not model.frozen:
             # model.save2ply(args.output_path / "ckpt_prefreeze.ply")
             del tet_optim
             model, tet_optim = freeze_model(model, args)
