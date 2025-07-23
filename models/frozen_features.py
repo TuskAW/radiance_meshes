@@ -144,10 +144,12 @@ class FrozenTetModel(BaseModel):
 
 
     @staticmethod
-    def load_ckpt(path: Path, device):
+    def load_ckpt(path: Path, device, **overrides):
         ckpt_path = path / "ckpt.pth"
         config_path = path / "config.json"
         config = Args.load_from_json(str(config_path))
+        for k, v in overrides.items():
+            config[k] = v
         ckpt = torch.load(ckpt_path)
         vertices = ckpt['interior_vertices']
         indices = ckpt["indices"]  # shape (N,4)

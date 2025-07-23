@@ -7,7 +7,7 @@ import imageio
 from tqdm import tqdm
 from submodules.lpipsPyTorch import LPIPSEval
 from fused_ssim import fused_ssim
-from utils.train_util import render
+from delaunay_rasterization import render
 from scipy.spatial import Delaunay
 import matplotlib.pyplot as plt
 

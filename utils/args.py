@@ -6,6 +6,12 @@ class Args:
     def __init__(self):
         self._data = {}
 
+    def __setitem__(self, key, value):
+        if key == "_data":
+            super().__setattr__(key, value)
+        else:
+            self._data[key] = value
+
     def __setattr__(self, key, value):
         if key == "_data":
             super().__setattr__(key, value)

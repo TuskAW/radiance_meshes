@@ -143,10 +143,11 @@ class Model(BaseModel):
         return circumcenter, normalized, *output
 
     @staticmethod
-    def load_ckpt(path: Path, device):
+    def load_ckpt(path: Path, device, config=None):
         ckpt_path = path / "ckpt.pth"
-        config_path = path / "config.json"
-        config = Args.load_from_json(str(config_path))
+        if config is None:
+            config_path = path / "config.json"
+            config = Args.load_from_json(str(config_path))
         ckpt = torch.load(ckpt_path)
         vertices = ckpt['interior_vertices']
         indices = ckpt["indices"]  # shape (N,4)

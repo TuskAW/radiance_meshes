@@ -17,6 +17,7 @@ from tqdm import tqdm
 import numpy as np
 from utils import cam_util
 from utils.train_util import *
+from delaunay_rasterization import render
 # from models.vertex_color import Model, TetOptimizer
 from models.ingp_color import Model, TetOptimizer
 # from models.ingp_linear import Model, TetOptimizer
@@ -25,7 +26,6 @@ from models.frozen_features import freeze_model
 from fused_ssim import fused_ssim
 from pathlib import Path, PosixPath
 from utils.args import Args
-import json
 import imageio
 from utils import test_util
 import termplotlib as tpl
@@ -142,31 +142,15 @@ args.lambda_tv_grid = 0.0
 
 args.checkpoint_iterations = []
 
-args = Args.from_namespace(args.get_parser().parse_args())
+parser = args.get_parser()
+args = Args.from_namespace(parser.parse_args())
 
-class CustomEncoder(json.JSONEncoder):
-    def default(self, o):
-        if isinstance(o, PosixPath):
-            return str(o)
-        return super().default(o)
-
-class SimpleSampler:
-    def __init__(self, total_num_samples, batch_size):
-        self.total_num_samples = total_num_samples
-        self.batch_size = batch_size
-        self.curr = total_num_samples
-        self.ids = None
-
-    def nextids(self, batch_size=None):
-        batch_size = self.batch_size if batch_size is None else batch_size
-        self.curr += batch_size
-        if self.curr + batch_size > self.total_num_samples:
-            # self.ids = torch.LongTensor(np.random.permutation(self.total_num_samples))
-            self.ids = torch.randperm(self.total_num_samples, dtype=torch.long, device=device)
-            self.curr = 0
-        ids = self.ids[self.curr : self.curr + batch_size]
-        return ids
-
+# if a ckpt is loaded, load config, then override config with user specified flags
+if len(args.ckpt) > 0: 
+    config_path = Path(args.ckpt) / "config.json"
+    config = Args.load_from_json(str(config_path))
+parser.set_defaults(**config.as_dict())
+args = Args.from_namespace(parser.parse_args())
 
 args.output_path.mkdir(exist_ok=True, parents=True)
 # args.checkpoint_iterations.append(args.freeze_start-1)
@@ -188,7 +172,7 @@ if len(args.ckpt) > 0:
     from models.frozen_features import FrozenTetModel, FrozenTetOptimizer
     # from models.frozen import FrozenTetModel
     try:
-        model = Model.load_ckpt(Path(args.ckpt), device)
+        model = Model.load_ckpt(Path(args.ckpt), device, args)
         tet_optim = TetOptimizer(model, final_iter=final_iter, **args.as_dict())
     except:
         model = FrozenTetModel.load_ckpt(Path(args.ckpt), device)

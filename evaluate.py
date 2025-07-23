@@ -1,4 +1,4 @@
-from utils.train_util import render
+from delaunay_rasterization import render
 # from models.vertex_color import Model
 import pickle
 import torch
