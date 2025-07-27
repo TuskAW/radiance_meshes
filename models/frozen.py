@@ -182,6 +182,9 @@ class FrozenTetModel(BaseModel):
     def num_int_verts(self):
         return self.interior_vertices.shape[0]
 
+    def sh_up(self):
+        pass
+
     def calc_tet_density(self):
         densities = []
         verts = self.vertices

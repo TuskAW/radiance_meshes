@@ -1,2 +1,3 @@
 dataset_path,error,gpu_id,image_folder,output_folder
 /data/nerf_datasets/360/bicycle,Process failed and no JSON output file found,0,images_4,output/bicycle_ifimages_4_r31_noglo_si1k
+/data/nerf_datasets/360/garden,Process failed and no JSON output file found,0,images_4,output/garden_ifimages_4_r31_noglo_si1k

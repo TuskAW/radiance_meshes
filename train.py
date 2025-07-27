@@ -358,9 +358,6 @@ for iteration in progress_bar:
 
     tet_optim.update_learning_rate(iteration)
 
-    if do_sh_up:
-        model.sh_up()
-
     with torch.no_grad():
         if iteration % 10 == 0:
             render_pkg = render(sample_camera, model, min_t=min_t, tile_size=args.tile_size)
@@ -399,6 +396,9 @@ for iteration in progress_bar:
     if iteration in args.checkpoint_iterations:
         model.save2ply(args.output_path / f"ckpt_{iteration}.ply")
         print(f"Saved checkpoint at iteration {iteration}")
+
+    if do_sh_up:
+        model.sh_up()
 
     psnr = 20 * math.log10(1.0 / math.sqrt(l2_loss.detach().cpu().item()))
     psnrs[-1].append(psnr)
