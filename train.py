@@ -137,7 +137,7 @@ args.use_bilateral_grid = False
 args.bilateral_grid_shape = [16, 16, 8]
 args.bilateral_grid_lr = 0.003
 args.lambda_tv_grid = 0.0
-
+args.record_training = False
 args.checkpoint_iterations = []
 
 parser = args.get_parser()
@@ -245,7 +245,8 @@ if args.glo_dim > 0:
     glo_list = glo_list.cuda()
     glo_optim = torch.optim.Adam(glo_list.parameters(), lr=args.glo_lr)
 
-video_writer = cv2.VideoWriter(str(args.output_path / "training.mp4"), cv2.CAP_FFMPEG, cv2.VideoWriter_fourcc(*'MP4V'), 30,
+if args.record_training:
+    video_writer = cv2.VideoWriter(str(args.output_path / "training.mp4"), cv2.CAP_FFMPEG, cv2.VideoWriter_fourcc(*'MP4V'), 30,
                                pad_hw2even(sample_camera.image_width, sample_camera.image_height))
 
 progress_bar = tqdm(range(args.iterations))
@@ -359,7 +360,7 @@ for iteration in progress_bar:
     tet_optim.update_learning_rate(iteration)
 
     with torch.no_grad():
-        if iteration % 10 == 0:
+        if iteration % 10 == 0 and args.record_training:
             render_pkg = render(sample_camera, model, min_t=min_t, tile_size=args.tile_size)
             sample_image = render_pkg['render']
             sample_image = sample_image.permute(1, 2, 0)
@@ -415,7 +416,8 @@ for iteration in progress_bar:
     })
 
 avged_psnrs = [sum(v)/len(v) for v in psnrs if len(v) == len(train_cameras)]
-video_writer.release()
+if args.record_training:
+    video_writer.release()
 
 model.save2ply(args.output_path / "ckpt.ply")
 
