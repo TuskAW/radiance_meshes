@@ -229,6 +229,7 @@ def readColmapSceneInfo(path, images, eval, llffhold=8):
                            train_cameras=train_cam_infos,
                            test_cameras=test_cam_infos,
                            nerf_normalization=nerf_normalization,
+                           transform=np.eye(4),
                            ply_path=ply_path)
     return scene_info
 
@@ -310,6 +311,7 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
                            train_cameras=train_cam_infos,
                            test_cameras=test_cam_infos,
                            nerf_normalization=nerf_normalization,
+                           transform=np.eye(4),
                            ply_path=ply_path)
     return scene_info
 

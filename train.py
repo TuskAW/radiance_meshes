@@ -48,6 +48,7 @@ args.iterations = 30000
 args.ckpt = ""
 args.render_train = False
 args.delaunay_interval = 10
+args.orient_scene = True
 
 # Light Settings
 args.max_sh_deg = 3
@@ -81,7 +82,7 @@ args.sh_hidden_dim = 256
 
 args.dg_init=0.1
 args.g_init=0.1
-args.s_init=0.1
+args.s_init=1e-4
 args.d_init=0.1
 args.c_init=0.1
 
@@ -106,6 +107,7 @@ args.final_fnetwork_lr = 1e-4
 args.lambda_dist = 1e-4
 args.lambda_density = 0.0
 args.lambda_aniso = 0.0
+args.lambda_cost = 1e-3
 
 # Clone Settings
 args.num_samples = 200
@@ -129,9 +131,10 @@ args.density_threshold = 0.1
 args.alpha_threshold = 0.1
 args.total_thresh = 0.025
 args.within_thresh = 0.4
-args.density_intercept = 1.0
+args.density_intercept = 0.2
 args.voxel_size = 0.01
 args.start_threshold = 5500
+args.ext_convex_hull = True
 
 args.use_bilateral_grid = False
 args.bilateral_grid_shape = [16, 16, 8]
@@ -158,6 +161,7 @@ print(args.checkpoint_iterations)
 train_cameras, test_cameras, scene_info = loader.load_dataset(
     args.dataset_path, args.image_folder, data_device=args.data_device, eval=args.eval)
 
+np.savetxt(str(args.output_path / "transform.txt"), scene_info.transform)
 
 args.num_samples = min(len(train_cameras), args.num_samples)
 
@@ -246,7 +250,7 @@ if args.glo_dim > 0:
     glo_optim = torch.optim.Adam(glo_list.parameters(), lr=args.glo_lr)
 
 if args.record_training:
-    video_writer = cv2.VideoWriter(str(args.output_path / "training.mp4"), cv2.CAP_FFMPEG, cv2.VideoWriter_fourcc(*'MP4V'), 30,
+    video_writer = cv2.VideoWriter(str(args.output_path / "training.mp4"), cv2.CAP_FFMPEG, cv2.VideoWriter_fourcc(*'avc1'), 30,
                                pad_hw2even(sample_camera.image_width, sample_camera.image_height))
 
 progress_bar = tqdm(range(args.iterations))
@@ -312,18 +316,24 @@ for iteration in progress_bar:
     dl_loss = render_pkg['distortion_loss']
     a = args.density_intercept
     mask = render_pkg['mask']
-    # density_loss = (-(render_pkg['density'] - a)**2 / a**2 + 1).clip(min=0)[mask].mean()
-    density_loss = render_pkg['density'][mask].mean()
+    area = topo_utils.tet_surface_areas(model.vertices[model.indices])
+    density = render_pkg['density'].reshape(-1)
+
+    # density_loss = ((-(density - a)**2 / a**2 + 1).clip(min=0) * area)[mask].mean()
+    density_loss = density[mask].mean()
     lambda_dist = args.lambda_dist if iteration > 1000 else 0
     lambda_density = lambda_dist * args.lambda_density if iteration > 1000 else 0
     lambda_aniso = args.lambda_aniso if iteration > 1000 else 0
     aniso_loss = model.calc_aniso_loss(render_pkg['density'])[mask].mean()
+    # area = topo_utils.tet_volumes(model.vertices[model.indices])
+    render_cost = (density.clip(max=2*args.density_threshold) * area.reshape(-1))[mask].mean()
     loss = (1-args.lambda_ssim)*l1_loss + \
            args.lambda_ssim*ssim_loss + \
            reg + \
            lambda_dist * dl_loss + \
            lambda_density * density_loss + \
-           lambda_aniso * aniso_loss
+           lambda_aniso * aniso_loss + \
+           args.lambda_cost * render_cost
 
     if args.use_bilateral_grid:
         tvloss = args.lambda_tv_grid * total_variation_loss(bil_grids.grids)
@@ -376,6 +386,11 @@ for iteration in progress_bar:
             model.eval()
             stats = collect_render_stats(sampled_cams, model, glo_list, args, device)
             model.train()
+            render_pkg = render(sample_camera, model, min_t=min_t, tile_size=args.tile_size)
+            sample_image = render_pkg['render']
+            sample_image = sample_image.permute(1, 2, 0)
+            sample_image = (sample_image.detach().cpu().numpy()*255).clip(min=0, max=255).astype(np.uint8)
+            sample_image = cv2.cvtColor(sample_image, cv2.COLOR_RGB2BGR)
 
             apply_densification(
                 stats,

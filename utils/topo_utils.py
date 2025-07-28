@@ -28,6 +28,22 @@ def tet_volumes(tets):
     vol = det / 6.0
     return vol
 
+def tet_surface_areas(tets):
+    v0 = tets[:, 0]
+    v1 = tets[:, 1]
+    v2 = tets[:, 2]
+    v3 = tets[:, 3]
+    
+    # Compute area of each face using cross product
+    area0 = 0.5 * torch.norm(torch.cross(v1 - v0, v2 - v0, dim=1), dim=1)
+    area1 = 0.5 * torch.norm(torch.cross(v1 - v0, v3 - v0, dim=1), dim=1)
+    area2 = 0.5 * torch.norm(torch.cross(v2 - v0, v3 - v0, dim=1), dim=1)
+    area3 = 0.5 * torch.norm(torch.cross(v2 - v1, v3 - v1, dim=1), dim=1)
+    
+    # Total surface area is the sum of all face areas
+    surface_area = area0 + area1 + area2 + area3
+    return surface_area
+
 @torch.no_grad()
 def tet_denom(tets):
     v0 = tets[:, 0]

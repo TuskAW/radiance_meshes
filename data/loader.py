@@ -7,10 +7,11 @@ from data.dataset_readers import sceneLoadTypeCallbacks
 from data.camera import Camera
 from data.types import BasicPointCloud
 from tqdm import tqdm
+from typing import Optional, Tuple
 
 WARNED = False
 
-def transform_poses_pca(poses):
+def transform_poses_pca(poses) -> Tuple[np.ndarray, np.ndarray]:
     """
     Transforms poses so principal components lie on XYZ axes.
 
@@ -102,7 +103,7 @@ def load_cameras(cam_infos, resolution_scale, resolution, data_device):
         print(cam_infos[0])
     return camera_list
 
-def transform_cameras_pca(cameras):
+def transform_cameras_pca(cameras) -> Tuple[np.ndarray, np.ndarray]:
     if len(cameras) == 0:
         return cameras, np.eye(4)
     poses = np.stack([
@@ -129,7 +130,7 @@ def set_pose(camera, T):
     return camera
 
 
-def load_dataset(source_path, images_folder, data_device, eval, white_background=True, resolution_scale=1.0, resolution=-1):
+def load_dataset(source_path, images_folder, data_device, eval, white_background=True, resolution_scale=1.0, resolution=-1, orient_scene=True):
     if os.path.exists(os.path.join(source_path, "sparse")):
         scene_info = sceneLoadTypeCallbacks["Colmap"](source_path, images_folder, eval)
     elif os.path.exists(os.path.join(source_path, "transforms_train.json")):
@@ -144,15 +145,17 @@ def load_dataset(source_path, images_folder, data_device, eval, white_background
     test_cameras = load_cameras(scene_info.test_cameras, resolution_scale, resolution, data_device)
     print(f"Loaded Test Cameras: {len(test_cameras)}")
 
-    print("Transforming poses")
-    _, pca_transform = transform_cameras_pca(train_cameras + test_cameras)
-    xyz = scene_info.point_cloud.points
-    xyz_hom = np.hstack((xyz, np.ones((xyz.shape[0], 1))))
-    xyz_transformed_hom = (pca_transform @ xyz_hom.T).T
-    transformed_pcd = scene_info.point_cloud._replace(points=xyz_transformed_hom[:, :3])
-    scene_info = scene_info._replace(
-        point_cloud=transformed_pcd,
-    )
+    if orient_scene:
+        print("Transforming poses")
+        _, pca_transform = transform_cameras_pca(train_cameras + test_cameras)
+        xyz = scene_info.point_cloud.points
+        xyz_hom = np.hstack((xyz, np.ones((xyz.shape[0], 1))))
+        xyz_transformed_hom = (pca_transform @ xyz_hom.T).T
+        transformed_pcd = scene_info.point_cloud._replace(points=xyz_transformed_hom[:, :3])
+        scene_info = scene_info._replace(
+            point_cloud=transformed_pcd,
+            transform=pca_transform,
+        )
 
 
     return train_cameras, test_cameras, scene_info

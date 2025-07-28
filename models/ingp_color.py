@@ -6,7 +6,6 @@ from gdel3d import Del
 from torch import nn
 from icecream import ic
 
-from utils.topo_utils import calculate_circumcenters_torch, fibonacci_spiral_on_sphere, calc_barycentric, sample_uniform_in_sphere, tet_volumes
 from utils import topo_utils
 from utils.contraction import contract_mean_std
 from utils.contraction import contract_points, inv_contract_points
@@ -128,7 +127,7 @@ class Model(BaseModel):
     def compute_batch_features(self, vertices, indices, start, end, circumcenters=None, glo=None):
         if circumcenters is None:
             tets = vertices[indices[start:end]]
-            circumcenter, radius = calculate_circumcenters_torch(tets.double())
+            circumcenter, radius = topo_utils.calculate_circumcenters_torch(tets.double())
         else:
             circumcenter = circumcenters[start:end]
         if self.training:
@@ -202,7 +201,7 @@ class Model(BaseModel):
             del prev
         
         indices = torch.as_tensor(indices_np).cuda()
-        vols = tet_volumes(verts[indices])
+        vols = topo_utils.tet_volumes(verts[indices])
         reverse_mask = vols < 0
         if reverse_mask.sum() > 0:
             indices[reverse_mask] = indices[reverse_mask][:, [1, 0, 2, 3]]
@@ -226,7 +225,7 @@ class Model(BaseModel):
 
     @staticmethod
     def init_from_pcd(point_cloud, cameras, device, max_sh_deg,
-                      voxel_size=0.00, **kwargs):
+                      ext_convex_hull, voxel_size=0.00, **kwargs):
         torch.manual_seed(2)
 
         ccenters = torch.stack([c.camera_center.reshape(3) for c in cameras], dim=0).to(device)
@@ -260,7 +259,7 @@ class Model(BaseModel):
         pcd_scaling = (vertices - vertices.mean(dim=0, keepdim=True)).abs().max(dim=0).values
         new_radius = math.sqrt(2) * pcd_scaling.cpu()
 
-        # vertices = sample_uniform_in_sphere(10000, 3, base_radius=0, radius=new_radius, device='cpu') + center.reshape(1, 3).cpu()
+        # vertices = topo_util.sample_uniform_in_sphere(10000, 3, base_radius=0, radius=new_radius, device='cpu') + center.reshape(1, 3).cpu()
 
         # vertices = vertices + torch.randn(*vertices.shape) * 1e-3
         # v = Del(vertices.shape[0])
@@ -270,12 +269,23 @@ class Model(BaseModel):
         # vertices = vertices[indices_np].mean(dim=1)
         # vertices = vertices + torch.randn(*vertices.shape) * 1e-3
 
-        # within_sphere = sample_uniform_in_sphere(10000, 3, base_radius=new_radius, radius=new_radius, device='cpu') + center.reshape(1, 3).cpu()
+        # within_sphere = topo_util.sample_uniform_in_sphere(10000, 3, base_radius=new_radius, radius=new_radius, device='cpu') + center.reshape(1, 3).cpu()
         # vertices = torch.cat([vertices, within_sphere], dim=0)
-        num_ext = 5000
-        ext_vertices = fibonacci_spiral_on_sphere(num_ext, new_radius.reshape(1, 3), device='cpu') + center.reshape(1, 3).cpu()
-        # ext_vertices = torch.empty((0, 3), device='cpu')
-        num_ext = ext_vertices.shape[0]
+        if ext_convex_hull:
+            num_ext = 5000
+            ext_vertices = topo_utils.expand_convex_hull(vertices, 1, device=vertices.device)
+            if ext_vertices.shape[0] > num_ext:
+                inds = np.random.default_rng().permutation(ext_vertices.shape[0])[:num_ext]
+                ext_vertices = ext_vertices[inds]
+            else:
+                num_ext = ext_vertices.shape[0]
+        else:
+            num_ext = 5000
+            ext_vertices = topo_utils.fibonacci_spiral_on_sphere(num_ext, new_radius.reshape(1, 3), device='cpu') + center.reshape(1, 3).cpu()
+            # ext_vertices = torch.empty((0, 3), device='cpu')
+            num_ext = ext_vertices.shape[0]
+        vertices = torch.cat([vertices, ext_vertices], dim=0)
+        ext_vertices = torch.empty((0, 3))
 
         model = Model(vertices.cuda(), ext_vertices, center, scaling,
                       max_sh_deg=max_sh_deg, **kwargs)
@@ -442,7 +452,7 @@ class TetOptimizer:
         clone_vertices = self.model.vertices[clone_indices]
 
         if split_mode == "circumcenter":
-            circumcenters, radius = calculate_circumcenters_torch(clone_vertices)
+            circumcenters, radius = topo_utils.calculate_circumcenters_torch(clone_vertices)
             radius = radius.reshape(-1, 1)
             circumcenters = circumcenters.reshape(-1, 3)
             sphere_loc = sample_uniform_in_sphere(circumcenters.shape[0], 3).to(device)
@@ -458,12 +468,12 @@ class TetOptimizer:
             barycentric_weights = barycentric / (1e-3+barycentric.sum(dim=1, keepdim=True))
             new_vertex_location = (self.model.vertices[clone_indices] * barycentric_weights).sum(dim=1)
         elif split_mode == "split_point":
-            _, radius = calculate_circumcenters_torch(self.model.vertices[clone_indices])
+            _, radius = topo_utils.calculate_circumcenters_torch(self.model.vertices[clone_indices])
             split_point += (split_std * radius.reshape(-1, 1)).clip(min=1e-3, max=3) * torch.randn(*split_point.shape, device=self.model.device)
             new_vertex_location = split_point
             # new_vertex_location = (self.model.vertices[clone_indices] * barycentric_weights.unsqueeze(-1)).sum(dim=1)
         elif split_mode == "split_point_c":
-            barycentric_weights = calc_barycentric(split_point, clone_vertices).clip(min=0)
+            barycentric_weights = topo_utils.calc_barycentric(split_point, clone_vertices).clip(min=0)
             barycentric_weights = barycentric_weights / (1e-3+barycentric_weights.sum(dim=1, keepdim=True))
             barycentric_weights += 1e-4*torch.randn(*barycentric_weights.shape, device=self.model.device)
             new_vertex_location = (self.model.vertices[clone_indices] * barycentric_weights.unsqueeze(-1)).sum(dim=1)
