@@ -21,8 +21,8 @@ from delaunay_rasterization import render
 # from models.vertex_color import Model, TetOptimizer
 from models.ingp_color import Model, TetOptimizer
 # from models.ingp_linear import Model, TetOptimizer
-# from models.frozen_features import freeze_model
-from models.frozen import freeze_model
+from models.frozen_features import freeze_model
+# from models.frozen import freeze_model
 from fused_ssim import fused_ssim
 from pathlib import Path, PosixPath
 from utils.args import Args
@@ -56,7 +56,7 @@ args.sh_interval = 2000
 args.sh_step = 1
 args.bake_model = True
 
-args.glo_dim = 0#128
+args.glo_dim = 128
 args.glo_lr = 1e-3
 args.glo_network_lr = 5e-5
 args.glo_weight_decay = 1e-1
@@ -74,7 +74,7 @@ args.per_level_scale = 2
 args.L = 6
 args.density_offset = -4
 args.weight_decay = 0.1
-args.hashmap_dim = 8
+args.hashmap_dim = 16
 args.percent_alpha = 0.04 # preconditioning
 args.spike_duration = 500
 args.hidden_dim = 64
@@ -104,7 +104,7 @@ args.fnetwork_lr = 1e-3
 args.final_fnetwork_lr = 1e-4
 
 # Distortion Settings
-args.lambda_dist = 1e-4
+args.lambda_dist = 1e-6
 args.lambda_density = 0.0
 args.lambda_aniso = 0.0
 args.lambda_cost = 1e-3
@@ -386,6 +386,12 @@ for iteration in progress_bar:
             model.eval()
             stats = collect_render_stats(sampled_cams, model, glo_list, args, device)
             model.train()
+            render_pkg = render(sample_camera, model, min_t=min_t, tile_size=args.tile_size)
+            sample_image = render_pkg['render']
+            sample_image = sample_image.permute(1, 2, 0)
+            sample_image = (sample_image.detach().cpu().numpy()*255).clip(min=0, max=255).astype(np.uint8)
+            sample_image = cv2.cvtColor(sample_image, cv2.COLOR_RGB2BGR)
+
             render_pkg = render(sample_camera, model, min_t=min_t, tile_size=args.tile_size)
             sample_image = render_pkg['render']
             sample_image = sample_image.permute(1, 2, 0)

@@ -125,13 +125,11 @@ class Model(BaseModel):
 
 
     def compute_batch_features(self, vertices, indices, start, end, circumcenters=None, glo=None):
+        tets = vertices[indices[start:end]]
         if circumcenters is None:
-            tets = vertices[indices[start:end]]
             circumcenter, radius = topo_utils.calculate_circumcenters_torch(tets.double())
         else:
             circumcenter = circumcenters[start:end]
-        if self.training:
-            circumcenter += self.alpha*torch.rand_like(circumcenter)
         normalized = (circumcenter - self.center) / self.scene_scaling
         radius = torch.linalg.norm(circumcenter - vertices[indices[start:end, 0]], dim=-1)
         cv, cr = contract_mean_std(normalized, radius / self.scene_scaling)
@@ -139,8 +137,11 @@ class Model(BaseModel):
 
         glo = glo if glo is not None else self.default_glo
 
-        output = checkpoint(self.backbone, x, cr, glo, use_reentrant=True)
-        return circumcenter, normalized, *output
+        density, rgb, grd, sh = checkpoint(self.backbone, x, cr, glo, use_reentrant=True)
+        density = safe_div(density, radius.reshape(-1, 1).detach())
+        # vol = topo_utils.tet_volumes(tets).clip(min=1, max=1000)
+        # density = safe_div(density, vol.reshape(-1, 1).detach())
+        return circumcenter, normalized, density, rgb, grd, sh
 
     @staticmethod
     def load_ckpt(path: Path, device, config=None):
