@@ -18,6 +18,7 @@ import numpy as np
 from utils.args import Args
 from scipy.spatial import  Delaunay
 # import open3d as o3d
+from sh_slang.eval_sh import eval_sh
 from utils.model_util import *
 from models.base_model import BaseModel
 from muon import SingleDeviceMuonWithAuxAdam
@@ -89,7 +90,7 @@ class Model(BaseModel):
             tet_color_raw = eval_sh(
                 tets.mean(dim=1).detach(),
                 RGB2SH(rgb),
-                sh.reshape(-1, (self.max_sh_deg+1)**2 - 1, 3).half(),
+                sh.reshape(-1, (self.max_sh_deg+1)**2 - 1, 3),
                 cam_center,
                 self.current_sh_deg).float()
             dvrgbs = activate_output(cam_center, tet_color_raw,
@@ -322,7 +323,7 @@ class TetOptimizer:
                  glo_net_decay: float = 0,
                  glo_network_lr: float = 1e-3,
                  percent_alpha: float = 0.02,
-
+                 sh_weight_decay: float = 1e-5,
                  **kwargs):
         self.weight_decay = weight_decay
         self.lambda_tv = lambda_tv
@@ -354,7 +355,7 @@ class TetOptimizer:
             process(model.backbone.density_net, network_lr) + \
             process(model.backbone.color_net, network_lr) + \
             process(model.backbone.gradient_net, network_lr) + \
-            process(model.backbone.sh_net, network_lr, weight_decay=1e-5) + \
+            process(model.backbone.sh_net, network_lr, weight_decay=sh_weight_decay) + \
             glo_p
         )
         self.vert_lr_multi = float(model.scene_scaling.cpu())

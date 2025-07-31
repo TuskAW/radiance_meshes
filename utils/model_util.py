@@ -8,7 +8,7 @@ from utils.topo_utils import calculate_circumcenters_torch, fibonacci_spiral_on_
 from utils.safe_math import safe_exp, safe_div, safe_sqrt
 from utils.contraction import contract_mean_std
 from utils.contraction import contract_points, inv_contract_points
-from sh_slang.eval_sh_py import eval_sh
+# from sh_slang.eval_sh_py import eval_sh
 from utils.hashgrid import HashEmbedderOptimized
 from icecream import ic
 import torch.nn.init as init # Common alias for torch.nn.init
@@ -247,7 +247,7 @@ class iNGPDW(nn.Module):
             hglo = h
         rgb = self.color_net(hglo)
         field_samples = self.gradient_net(hglo)
-        sh  = self.sh_net(hglo).half()
+        sh  = self.sh_net(hglo)
 
         rgb = rgb.reshape(-1, 3, 1) + 0.5
         density = safe_exp(sigma+self.density_offset)
@@ -313,7 +313,7 @@ class Heads(nn.Module):
             hglo = h
         rgb = self.color_net(hglo)
         field_samples = self.gradient_net(hglo)
-        sh  = self.sh_net(hglo).half()
+        sh  = self.sh_net(hglo)
 
         rgb = rgb.reshape(-1, 3, 1) + 0.5
         density = safe_exp(sigma+self.density_offset)

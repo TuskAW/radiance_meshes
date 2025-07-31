@@ -18,6 +18,7 @@ from utils.train_util import get_expon_lr_func, SpikingLR
 from utils import mesh_util
 from utils.args import Args
 from models.base_model import BaseModel
+from sh_slang.eval_sh import eval_sh
 
 
 class FrozenTetModel(BaseModel):
@@ -161,7 +162,7 @@ class FrozenTetModel(BaseModel):
         tet_color_raw = eval_sh(
             tets.mean(dim=1).detach(),
             RGB2SH(rgb),
-            sh.reshape(-1, (self.max_sh_deg+1)**2 - 1, 3).half(),
+            sh.reshape(-1, (self.max_sh_deg+1)**2 - 1, 3),
             cam_center,
             self.max_sh_deg).float()
         cell_output = activate_output(cam_center, tet_color_raw,

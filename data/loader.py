@@ -119,11 +119,6 @@ def transform_cameras_pca(cameras) -> Tuple[np.ndarray, np.ndarray]:
     return cameras, transform
 
 def set_pose(camera, T):
-    # camera.world_view_transform = T.T
-    # camera.full_proj_transform = (
-    #     camera.world_view_transform.unsqueeze(0).bmm(
-    #         camera.projection_matrix.unsqueeze(0))).squeeze(0)
-    # camera.camera_center = camera.world_view_transform.inverse()[3, :3]
     camera.R = T[:3, :3].T.numpy()
     camera.T = T[:3, 3].numpy()
     camera.update()

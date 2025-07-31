@@ -76,7 +76,7 @@ def run_test(test_params, gpu_id, args):
     json_file = os.path.join(output_folder, "results.json")
     # Attempt to run the command. If it fails, still try to read the JSON output.
     try:
-        subprocess.run(command, shell=True, check=True, capture_output=True, text=True)
+        subprocess.run(command, shell=True, check=True, text=True)
     except subprocess.CalledProcessError as e:
         print(f"Test on GPU {gpu_id} failed with error: {e}")
         print(f"STDOUT: {e.stdout}")

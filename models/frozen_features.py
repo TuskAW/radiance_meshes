@@ -20,6 +20,7 @@ import numpy as np
 from utils.args import Args
 from utils.model_util import *
 from utils import safe_math
+from sh_slang.eval_sh import eval_sh
 
 class FrozenTetModel(BaseModel):
     def __init__(self,
@@ -85,7 +86,7 @@ class FrozenTetModel(BaseModel):
             tet_color_raw = eval_sh(
                 tets.mean(dim=1).detach(),
                 RGB2SH(rgb),
-                sh.reshape(-1, (self.max_sh_deg+1)**2 - 1, 3).half(),
+                sh.reshape(-1, (self.max_sh_deg+1)**2 - 1, 3),
                 cam_center,
                 self.max_sh_deg).float()
             dvrgbs = activate_output(cam_center, tet_color_raw,
@@ -211,6 +212,7 @@ class FrozenTetOptimizer:
                  lr_delay: int = 500,
                  lambda_tv: float = 0.0,
                  lambda_density: float = 0.0,
+                 sh_weight_decay: float = 1e-5,
 
                  glo_net_decay: float = 0,
                  glo_network_lr: float = 1e-3,
@@ -245,7 +247,7 @@ class FrozenTetOptimizer:
             process(model.backbone.density_net, fnetwork_lr) + \
             process(model.backbone.color_net, fnetwork_lr) + \
             process(model.backbone.gradient_net, fnetwork_lr) + \
-            process(model.backbone.sh_net, fnetwork_lr) + \
+            process(model.backbone.sh_net, fnetwork_lr, weight_decay=sh_weight_decay) + \
             glo_p
         )
         self.feature_optim = torch.optim.Adam([

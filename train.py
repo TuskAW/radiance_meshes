@@ -55,7 +55,7 @@ args.sh_interval = 2000
 args.sh_step = 1
 args.bake_model = True
 
-args.glo_dim = 128
+args.glo_dim = 0
 args.glo_lr = 1e-3
 args.glo_network_lr = 5e-5
 args.glo_weight_decay = 1e-1
@@ -64,9 +64,9 @@ args.glo_net_decay = 1e-6
 # iNGP Settings
 args.base_resolution = 64
 args.encoding_lr = 3e-3
-args.final_encoding_lr = 3e-5
+args.final_encoding_lr = 3e-4
 args.network_lr = 1e-3
-args.final_network_lr = 1e-5
+args.final_network_lr = 1e-4
 args.scale_multi = 0.35 # chosen such that 96% of the distribution is within the sphere 
 args.log2_hashmap_size = 23
 args.per_level_scale = 2
@@ -78,6 +78,7 @@ args.percent_alpha = 0.04 # preconditioning
 args.spike_duration = 500
 args.hidden_dim = 64
 args.sh_hidden_dim = 256
+args.sh_weight_decay = 1e-5
 
 args.dg_init=0.1
 args.g_init=0.1
