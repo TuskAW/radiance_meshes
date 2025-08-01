@@ -8,7 +8,6 @@ from icecream import ic
 
 from utils import topo_utils
 from utils.contraction import contract_mean_std
-from utils.contraction import contract_points, inv_contract_points
 
 from utils.train_util import get_expon_lr_func, SpikingLR, TwoPhaseLR
 from utils.graphics_utils import l2_normalize_th
@@ -29,7 +28,6 @@ torch.set_float32_matmul_precision('high')
 class Model(BaseModel):
     def __init__(self,
                  vertices: torch.Tensor,
-                 ext_vertices: torch.Tensor,
                  center: torch.Tensor,
                  scene_scaling: float,
                  density_offset=-1,
@@ -41,10 +39,6 @@ class Model(BaseModel):
         self.device = vertices.device
         self.density_offset = density_offset
         self.max_sh_deg = max_sh_deg
-        self.dir_offset = torch.tensor([
-            [0, 0],
-            [math.pi, 0],
-        ], device=self.device)
         self.sh_dim = ((1+max_sh_deg)**2-1)*3
         self.backbone = torch.compile(iNGPDW(self.sh_dim, glo_dim=glo_dim, **kwargs)).to(self.device)
         self.default_glo = None if glo_dim == 0 else torch.zeros((1, glo_dim), device=self.device)
@@ -57,7 +51,6 @@ class Model(BaseModel):
         self.feature_dim = 7
         self.current_sh_deg = current_sh_deg
 
-        self.register_buffer('ext_vertices', ext_vertices.to(self.device))
         self.register_buffer('center', center.reshape(1, 3))
         self.register_buffer('scene_scaling', torch.tensor(float(scene_scaling), device=self.device))
         self.interior_vertices = nn.Parameter(vertices.detach())
@@ -141,7 +134,7 @@ class Model(BaseModel):
         glo = glo if glo is not None else self.default_glo
 
         density, rgb, grd, sh = checkpoint(self.backbone, x, cr, glo, use_reentrant=True)
-        density = safe_div(density, radius.reshape(-1, 1).detach())
+        # density = safe_div(density, radius.reshape(-1, 1).detach())
         # vol = topo_utils.tet_volumes(tets).clip(min=1, max=1000)
         # density = safe_div(density, vol.reshape(-1, 1).detach())
         return circumcenter, normalized, density, rgb, grd, sh
@@ -157,8 +150,7 @@ class Model(BaseModel):
         indices = ckpt["indices"]  # shape (N,4)
         del ckpt["indices"]
         print(f"Loaded {vertices.shape[0]} vertices")
-        ext_vertices = ckpt['ext_vertices']
-        model = Model(vertices.to(device), ext_vertices, ckpt['center'], ckpt['scene_scaling'], **config.as_dict())
+        model = Model(vertices.to(device), ckpt['center'], ckpt['scene_scaling'], **config.as_dict())
         model.load_state_dict(ckpt)
         # model.min_t = model.scene_scaling * config.base_min_t
         model.min_t = config.base_min_t
@@ -176,16 +168,9 @@ class Model(BaseModel):
             densities.append(density.reshape(-1))
         return torch.cat(densities)
 
-    def inv_contract(self, points):
-        return inv_contract_points(points) * self.scene_scaling + self.center
-
-    def contract(self, points):
-        return contract_points((points - self.center) / self.scene_scaling)
-
     @property
     def vertices(self):
-        verts = self.interior_vertices
-        return torch.cat([verts, self.ext_vertices])
+        return self.interior_vertices
 
     def sh_up(self):
         self.current_sh_deg = min(self.current_sh_deg + 1, self.max_sh_deg)
@@ -204,12 +189,14 @@ class Model(BaseModel):
             indices_np = indices_np[(indices_np < verts.shape[0]).all(axis=1)]
             del prev
         
+        # Ensure volume is positive
         indices = torch.as_tensor(indices_np).cuda()
         vols = topo_utils.tet_volumes(verts[indices])
         reverse_mask = vols < 0
         if reverse_mask.sum() > 0:
             indices[reverse_mask] = indices[reverse_mask][:, [1, 0, 2, 3]]
 
+        # Cull tets with low density
         self.indices = indices
         denom = topo_utils.tet_denom(self.vertices.detach()[self.indices]).detach()
         if density_threshold > 0 or alpha_threshold > 0:
@@ -289,9 +276,8 @@ class Model(BaseModel):
             # ext_vertices = torch.empty((0, 3), device='cpu')
             num_ext = ext_vertices.shape[0]
         vertices = torch.cat([vertices, ext_vertices], dim=0)
-        ext_vertices = torch.empty((0, 3))
 
-        model = Model(vertices.cuda(), ext_vertices, center, scaling,
+        model = Model(vertices.cuda(), center, scaling,
                       max_sh_deg=max_sh_deg, **kwargs)
         return model
 
@@ -325,13 +311,9 @@ class TetOptimizer:
                  percent_alpha: float = 0.02,
                  sh_weight_decay: float = 1e-5,
                  **kwargs):
-        self.weight_decay = weight_decay
-        self.lambda_tv = lambda_tv
-        self.lambda_density = lambda_density
         self.optim = optim.CustomAdam([
             {"params": model.backbone.encoding.parameters(), "lr": encoding_lr, "name": "encoding"},
         ], ignore_param_list=["encoding", "network"], betas=[0.9, 0.999], eps=1e-15)
-        # self.net_optim = optim.CustomAdam([
         def process(body, lr, weight_decay=0):
             hidden_weights = [p for p in body.parameters() if p.ndim >= 2]
             hidden_gains_biases = [p for p in body.parameters() if p.ndim < 2]
@@ -386,8 +368,8 @@ class TetOptimizer:
             spike_duration, final_iter, base_net_scheduler,
             midpoint, densify_interval, densify_end,
             network_lr, network_lr)
-        self.net_scheduler_args = make_spiking(
-            network_lr, network_lr, final_network_lr)
+        # self.net_scheduler_args = make_spiking(
+        #     network_lr, network_lr, final_network_lr)
             # network_lr, final_network_lr)
 
         base_encoder_scheduler = get_expon_lr_func(lr_init=encoding_lr,
@@ -401,8 +383,8 @@ class TetOptimizer:
             midpoint, densify_interval, densify_end,
             encoding_lr, encoding_lr)
             # encoding_lr, final_encoding_lr)
-        self.encoder_scheduler_args = make_spiking(
-            encoding_lr, encoding_lr, final_encoding_lr)
+        # self.encoder_scheduler_args = make_spiking(
+        #     encoding_lr, encoding_lr, final_encoding_lr)
 
         self.vertex_lr = self.vert_lr_multi*vertices_lr
         base_vertex_scheduler = get_expon_lr_func(lr_init=self.vertex_lr,
@@ -418,8 +400,8 @@ class TetOptimizer:
             # self.vertex_lr, self.vert_lr_multi*final_vertices_lr)
             self.vertex_lr, self.vertex_lr)
 
-        self.vertex_scheduler_args = make_spiking(
-            self.vertex_lr, self.vertex_lr, self.vert_lr_multi*final_vertices_lr)
+        # self.vertex_scheduler_args = make_spiking(
+        #     self.vertex_lr, self.vertex_lr, self.vert_lr_multi*final_vertices_lr)
         self.iteration = 0
 
     def update_learning_rate(self, iteration):
@@ -451,40 +433,11 @@ class TetOptimizer:
         self.model.update_triangulation()
 
     @torch.no_grad()
-    def split(self, clone_indices, split_point, split_mode, split_std, **kwargs):
+    def split(self, clone_indices, split_point, split_std, **kwargs):
         device = self.model.device
-
-        if split_mode == "circumcenter":
-            clone_vertices = self.model.vertices[clone_indices]
-            circumcenters, radius = topo_utils.calculate_circumcenters_torch(clone_vertices)
-            radius = radius.reshape(-1, 1)
-            circumcenters = circumcenters.reshape(-1, 3)
-            sphere_loc = sample_uniform_in_sphere(circumcenters.shape[0], 3).to(device)
-            r = torch.randn((clone_indices.shape[0], 1), device=self.model.device)
-            r[r.abs() < 1e-2] = 1e-2
-            sampled_radius = (r * self.split_std + 1) * radius
-            new_vertex_location = l2_normalize_th(sphere_loc) * sampled_radius + circumcenters
-        elif split_mode == "barycenter":
-            barycentric_weights = 0.25*torch.ones((clone_indices.shape[0], clone_indices.shape[1], 1), device=device).clip(min=0.01, max=0.99)
-            new_vertex_location = (self.model.vertices[clone_indices] * barycentric_weights).sum(dim=1)
-        elif split_mode == "barycentric":
-            barycentric = torch.rand((clone_indices.shape[0], clone_indices.shape[1], 1), device=device).clip(min=0.01, max=0.99)
-            barycentric_weights = barycentric / (1e-3+barycentric.sum(dim=1, keepdim=True))
-            new_vertex_location = (self.model.vertices[clone_indices] * barycentric_weights).sum(dim=1)
-        elif split_mode == "split_point":
-            _, radius = topo_utils.calculate_circumcenters_torch(self.model.vertices[clone_indices])
-            split_point += (split_std * radius.reshape(-1, 1)).clip(min=1e-3, max=3) * torch.randn(*split_point.shape, device=self.model.device)
-            new_vertex_location = split_point
-            # new_vertex_location = (self.model.vertices[clone_indices] * barycentric_weights.unsqueeze(-1)).sum(dim=1)
-        elif split_mode == "split_point_c":
-            clone_vertices = self.model.vertices[clone_indices]
-            barycentric_weights = topo_utils.calc_barycentric(split_point, clone_vertices).clip(min=0)
-            barycentric_weights = barycentric_weights / (1e-3+barycentric_weights.sum(dim=1, keepdim=True))
-            barycentric_weights += 1e-4*torch.randn(*barycentric_weights.shape, device=self.model.device)
-            new_vertex_location = (self.model.vertices[clone_indices] * barycentric_weights.unsqueeze(-1)).sum(dim=1)
-        else:
-            raise Exception(f"Split mode: {split_mode} not supported")
-        self.add_points(new_vertex_location)
+        _, radius = topo_utils.calculate_circumcenters_torch(self.model.vertices[clone_indices])
+        split_point += (split_std * radius.reshape(-1, 1)).clip(min=1e-3, max=3) * torch.randn(*split_point.shape, device=self.model.device)
+        self.add_points(split_point)
 
     def main_step(self):
         self.optim.step()
@@ -501,42 +454,7 @@ class TetOptimizer:
     def regularizer(self, render_pkg, weight_decay, lambda_tv, **kwargs):
         weight_decay = weight_decay * sum([(embed.weight**2).mean() for embed in self.model.backbone.encoding.embeddings])
 
-        if lambda_tv > 0:
-            density = self.model.calc_tet_density()
-            diff  = density[self.pairs[:,0]] - density[self.pairs[:,1]]
-            tv_loss  = (self.face_area * diff.abs())
-            tv_loss  = tv_loss.sum() / self.face_area.sum()
-        else:
-            tv_loss = 0
-
-        return weight_decay + lambda_tv * tv_loss
+        return weight_decay
 
     def update_triangulation(self, **kwargs):
         self.model.update_triangulation(**kwargs)
-        if self.lambda_tv > 0:
-            self.build_tv()
-
-    def build_tv(self):
-        self.pairs, self.face_area = topo_utils.build_tv_struct(
-            self.model.vertices.detach(), self.model.indices, device='cuda')
-
-    def prune(self, diff_threshold, **kwargs):
-        if diff_threshold <= 0:
-            return
-        density = self.model.calc_tet_density()
-        self.build_tv()
-        diff  = density[self.pairs[:,0]] - density[self.pairs[:,1]]
-        tet_diff  = (self.face_area * diff.abs()).reshape(-1)
-
-        indices = self.model.indices.long()
-        device = indices.device
-        vert_diff = torch.zeros((self.model.vertices.shape[0],), device=device)
-
-        reduce_type = "amax"
-        vert_diff.scatter_reduce_(dim=0, index=indices[..., 0], src=tet_diff, reduce=reduce_type)
-        vert_diff.scatter_reduce_(dim=0, index=indices[..., 1], src=tet_diff, reduce=reduce_type)
-        vert_diff.scatter_reduce_(dim=0, index=indices[..., 2], src=tet_diff, reduce=reduce_type)
-        vert_diff.scatter_reduce_(dim=0, index=indices[..., 3], src=tet_diff, reduce=reduce_type)
-        keep_mask = vert_diff > diff_threshold
-        print(f"Pruned {(~keep_mask).sum()} points. VD: {vert_diff.mean()} TD: {tet_diff.mean()}")
-        self.remove_points(keep_mask)

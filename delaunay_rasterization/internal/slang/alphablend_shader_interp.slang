@@ -87,13 +87,15 @@ DistortionState5 update_distortion_state(
 {
     // no_diff float start = tukey_power_ladder(500*dist.x, -0.1);
     // no_diff float end = tukey_power_ladder(500*dist.y, -0.1);
-    float start = (2*dist.x) / (2+dist.x);
-    float end = (2*dist.y) / (2+dist.y);
+    //float start = (2*dist.x) / (2+dist.x);
+    //float end = (2*dist.y) / (2+dist.y);
+    float start = dist.x;
+    float end = dist.y;
     float scaling = 1;//no_diff scale_dist((dist.x+dist.y)*0.5);
     float d = safe_clip(-safe_expm1(-density * (end-start)), 0.f, 1.f);
 
-    float m0 = moment_0_int(start, end, d, T); // just weight
-    float m1 = moment_1_int(start, end, d, T);
+    float m0 = moment_0_int(start, start+1, d, T); // just weight
+    float m1 = moment_1_int(start, start+1, d, T);
 
     DistortionState5 new_state;
     new_state.x = old_state.x + 2.0f * m1 * old_state.z;
@@ -113,16 +115,20 @@ DistortionState5 undo_distortion_state(
     float density,
     float2 dist)
 {
-    float start = (2*dist.x) / (2+dist.x);
-    float end = (2*dist.y) / (2+dist.y);
+    //float start = (2*dist.x) / (2+dist.x);
+    //float end = (2*dist.y) / (2+dist.y);
+    float start = dist.x;
+    float end = dist.y;
     // no_diff float start = tukey_power_ladder(500*dist.x, -0.1);
     // no_diff float end = tukey_power_ladder(500*dist.y, -0.1);
     float scaling = 1;
     // float d = density;
     float d = safe_clip(-safe_expm1(-density * (end-start)), 0.f, 1.f);
 
-    float m0 = moment_0_int(start, end, d, T);
-    float m1 = moment_1_int(start, end, d, T);
+    //float m0 = moment_0_int(start, end, d, T);
+    //float m1 = moment_1_int(start, end, d, T);
+    float m0 = moment_0_int(start, start+1, d, T); // just weight
+    float m1 = moment_1_int(start, start+1, d, T);
 
     DistortionState5 old_state;
     old_state.z = new_state.z - m0;
