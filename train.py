@@ -112,8 +112,6 @@ args.lambda_cost = 1e-3
 # Clone Settings
 args.num_samples = 200
 args.split_std = 1e-1
-args.split_mode = "split_point"
-args.clone_schedule = "quadratic"
 args.min_tet_count = 9
 args.densify_start = 2000
 args.densify_end = 16000
@@ -406,12 +404,6 @@ for iteration in progress_bar:
             sample_image = (sample_image.detach().cpu().numpy()*255).clip(min=0, max=255).astype(np.uint8)
             sample_image = cv2.cvtColor(sample_image, cv2.COLOR_RGB2BGR)
 
-            render_pkg = render(sample_camera, model, min_t=min_t, tile_size=args.tile_size)
-            sample_image = render_pkg['render']
-            sample_image = sample_image.permute(1, 2, 0)
-            sample_image = (sample_image.detach().cpu().numpy()*255).clip(min=0, max=255).astype(np.uint8)
-            sample_image = cv2.cvtColor(sample_image, cv2.COLOR_RGB2BGR)
-
             apply_densification(
                 stats,
                 model       = model,
@@ -423,7 +415,6 @@ for iteration in progress_bar:
                 sample_image= sample_image,     # whatever RGB debug frame you use
                 budget      = max(args.budget - model.vertices.shape[0], 0)
             )
-            # tet_optim.prune(**args.as_dict())
             gc.collect()
             torch.cuda.empty_cache()
             densification_cam_buffer = []

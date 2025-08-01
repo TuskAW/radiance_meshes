@@ -134,6 +134,8 @@ class SpikingLR:
 
     def __call__(self, iteration):
         base_f = self.base_function(iteration)
+        if self.duration == 0:
+            return base_f
         if iteration < self.peak_start:
             return base_f
         elif iteration > self.peak_end:
