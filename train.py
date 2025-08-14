@@ -47,7 +47,7 @@ args.ckpt = ""
 args.render_train = False
 args.delaunay_interval = 10
 args.orient_scene = True
-args.freeze_features = True
+args.freeze_features = False
 
 # Light Settings
 args.max_sh_deg = 3
