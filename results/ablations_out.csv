@@ -1,3 +1,4 @@
-,dataset_path,error,gpu_id,image_folder,lambda_cost,output_folder,total_thresh,within_thresh
-,/optane/nerf_datasets/360/bicycle,Process failed and no JSON output file found,0,images_4,0,output/bicycle_ifimages_4_lc0_tt0.025_wt0.4,0.025,0.4
-,/optane/nerf_datasets/360/garden,Process failed and no JSON output file found,0,images_4,0,output/garden_ifimages_4_lc0_tt0.025_wt0.4,0.025,0.4
+,dataset_path,gpu_id,image_folder,lambda_cost,output_folder,psnr,test_LPIPS,test_PSNR,test_SSIM,total_thresh,within_thresh
+,/data/nerf_datasets/360/bicycle,0,images_4,0,output/bicycle_ifimages_4_lc0_tt0.025_wt0.4,23.368182385787286,0.27138441801071167,24.632314682006836,0.7436779737472534,0.025,0.4
+,/data/nerf_datasets/360/garden,0,images_4,0,output/garden_ifimages_4_lc0_tt0.025_wt0.4,27.0262312530957,0.15084882080554962,26.696916580200195,0.8459108471870422,0.025,0.4
+,/data/nerf_datasets/360/room,0,images_2,0,output/room_ifimages_2_lc0_tt0.025_wt0.4,31.993436158652077,0.27150964736938477,30.59916877746582,0.920693039894104,0.025,0.4

@@ -108,7 +108,7 @@ args.final_fnetwork_lr = 1e-4
 # Distortion Settings
 args.lambda_dist = 1e-4
 args.lambda_density = 0.0
-args.lambda_cost = 1e-3
+args.lambda_cost = 0.0
 args.lambda_color = 0.0
 
 # Clone Settings
@@ -135,7 +135,7 @@ args.total_thresh = 0.1#025
 args.within_thresh = 0.4
 args.density_intercept = 0.2
 args.voxel_size = 0.01
-args.start_threshold = 5500
+args.start_threshold = 10000000
 args.ext_convex_hull = True
 
 args.use_bilateral_grid = False
@@ -347,11 +347,11 @@ for iteration in progress_bar:
 
     # density_loss = ((-(density - a)**2 / a**2 + 1).clip(min=0) * area)[mask].mean()
     density_loss = density[mask].mean()
-    lambda_dist = args.lambda_dist if iteration > 1000 else 0
-    lambda_density = lambda_dist * args.lambda_density if iteration > 1000 else 0
+    lambda_dist = args.lambda_dist if iteration > 5000 else 0
+    lambda_density = lambda_dist * args.lambda_density if iteration > 5000 else 0
     # area = topo_utils.tet_volumes(model.vertices[model.indices])
     render_cost = (density.clip(max=2*args.density_threshold) * area.reshape(-1))[mask].mean()
-    lambda_alpha = args.lambda_alpha if iteration > 1000 else 0
+    lambda_alpha = args.lambda_alpha if iteration > 5000 else 0
     loss = (1-args.lambda_ssim)*l1_loss + \
            args.lambda_ssim*ssim_loss + \
            reg + \
