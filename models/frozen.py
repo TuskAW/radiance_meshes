@@ -181,7 +181,7 @@ class FrozenTetModel(BaseModel):
         tets = vertices[indices]
         if offset:
             base_color_v0_raw, normed_grd = offset_normalize(rgb, grd, circumcenters, tets)
-            return circumcenters, density, base_color_v0_raw, normed_grd, sh
+            return circumcenters, density, rgb, normed_grd, sh
         else:
             return circumcenters, density, rgb, grd, sh
 

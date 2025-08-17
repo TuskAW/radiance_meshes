@@ -225,7 +225,8 @@ class Model(BaseModel):
             ss.append(sh)
             if offset:
                 base_color_v0_raw, normed_grd = offset_normalize(rgb, grd, circumcenters, tets)
-                rs.append(base_color_v0_raw)
+                # rs.append(base_color_v0_raw)
+                rs.append(rgb)
                 gs.append(normed_grd)
             else:
                 rs.append(rgb)
@@ -268,7 +269,16 @@ class Model(BaseModel):
             indices_np = indices_np[(indices_np < verts.shape[0]).all(axis=1)]
             del prev
         
-        self.indices = torch.as_tensor(indices_np).cuda()
+
+        # Ensure volume is positive
+        indices = torch.as_tensor(indices_np).cuda()
+        vols = topo_utils.tet_volumes(verts[indices])
+        reverse_mask = vols < 0
+        if reverse_mask.sum() > 0:
+            indices[reverse_mask] = indices[reverse_mask][:, [1, 0, 2, 3]]
+
+        # Cull tets with low density
+        self.indices = indices
         if density_threshold > 0 or alpha_threshold > 0:
             tet_density = self.calc_tet_density()
             tet_alpha = self.calc_tet_alpha(mode="min", density=tet_density)
