@@ -159,6 +159,7 @@ class iNGPDW(nn.Module):
                  d_init=0.1,
                  c_init=0.6,
                  density_offset=-4,
+                 ablate_gradient=False,
                  **kwargs):
         super().__init__()
         self.scale_multi = scale_multi
@@ -167,6 +168,7 @@ class iNGPDW(nn.Module):
         self.per_level_scale = per_level_scale
         self.base_resolution = base_resolution
         self.density_offset = density_offset
+        self.ablate_gradient = ablate_gradient
 
         self.encoding = hashgrid.HashEmbedderOptimized(
             [torch.zeros((3)), torch.ones((3))],
@@ -232,5 +234,7 @@ class iNGPDW(nn.Module):
         rgb = rgb.reshape(-1, 3, 1) + 0.5
         density = safe_exp(sigma+self.density_offset)
         grd = torch.tanh(field_samples.reshape(-1, 1, 3)) / math.sqrt(3)
+        if self.ablate_gradient:
+            grd = grd * 0
         # grd = rgb * torch.tanh(field_samples.reshape(-1, 3, 3))  # shape (T, 3, 3)
         return density, rgb.reshape(-1, 3), grd, sh

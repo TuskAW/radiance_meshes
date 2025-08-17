@@ -170,11 +170,11 @@ def render(camera: Camera, model, cell_values=None, tile_size=16, min_t=0.1,
     render_pkg = {
         'render': image_rgb.permute(2,0,1)[:3, ...],
         'alpha': alpha,
-        'distortion_img': distortion_img,
+        # 'distortion_img': distortion_img,
         'distortion_loss': distortion_loss.mean(),
-        'visibility_filter': mask,
-        'circumcenters': circumcenter,
-        'density': cell_values[:, 0],
+        # 'visibility_filter': mask,
+        # 'circumcenters': circumcenter,
+        # 'density': cell_values[:, 0],
         'mask': mask,
         **extras
     }

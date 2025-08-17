@@ -3,7 +3,7 @@ import math
 from data.camera import Camera
 from utils import optim
 from sh_slang.eval_sh import eval_sh
-from gDel3D.build.gdel3d import Del
+from gdel3d import Del
 from torch import nn
 from icecream import ic
 
@@ -24,7 +24,6 @@ from scipy.spatial import ConvexHull
 from scipy.spatial import  Delaunay
 import open3d as o3d
 from data.types import BasicPointCloud
-from simple_knn._C import distCUDA2
 from utils import mesh_util
 from utils.model_util import *
 from models.base_model import BaseModel
@@ -42,6 +41,7 @@ class Model(BaseModel):
                  density_offset=-1,
                  current_sh_deg=2,
                  max_sh_deg=2,
+                 ablate_circumsphere=False,
                  **kwargs):
         super().__init__()
         self.device = vertices.device
@@ -60,6 +60,7 @@ class Model(BaseModel):
         self.alpha = 0
         self.linear = False
         self.feature_dim = 7
+        self.ablate_circumsphere = ablate_circumsphere
 
         self.register_buffer('ext_vertices', ext_vertices.to(self.device))
         self.register_buffer('center', center.reshape(1, 3))
@@ -121,7 +122,6 @@ class Model(BaseModel):
 
         vertices = torch.as_tensor(point_cloud.points).float()
 
-        dist = torch.clamp_min(distCUDA2(vertices.cuda()), 0.0000001).sqrt().cpu()
 
         # vertices = vertices.reshape(-1, 1, 3).expand(-1, init_repeat, 3)
         # vertices = vertices + torch.randn(*vertices.shape) * dist.reshape(-1, 1, 1).clip(min=0.01)
@@ -169,6 +169,8 @@ class Model(BaseModel):
             circumcenter, radius = calculate_circumcenters_torch(tets.double())
         else:
             circumcenter = circumcenters[start:end]
+        if self.ablate_circumsphere:
+            circumcenter = tets.mean(dim=1)
         if self.training:
             circumcenter += self.alpha*torch.rand_like(circumcenter)
         normalized = (circumcenter - self.center) / self.scene_scaling

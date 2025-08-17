@@ -143,6 +143,8 @@ args.lambda_tv = 0.0
 args.density_threshold = 0.001
 args.alpha_threshold = 0.001
 
+args.ablate_gradient = False
+args.ablate_circumsphere = False
 args.voxel_size = 0.01
 
 args.use_bilateral_grid = False
