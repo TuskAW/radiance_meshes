@@ -164,8 +164,8 @@ class Model(BaseModel):
         return model
 
     def compute_batch_features(self, vertices, indices, start, end, circumcenters=None):
+        tets = vertices[indices[start:end]]
         if circumcenters is None:
-            tets = vertices[indices[start:end]]
             circumcenter, radius = calculate_circumcenters_torch(tets.double())
         else:
             circumcenter = circumcenters[start:end]

@@ -31,15 +31,20 @@ def generate_folder_name(test_params, args, base_dir="output"):
     parts = []
     # Iterate in the order provided by test_params (csv.DictReader preserves header order)
     for key, value in test_params.items():
-        if key in blacklist or len(key.strip()) == 0:
+        if key in blacklist or (len(key.strip()) == 0 and len(value.strip()) == 0):
             continue
         if key == "dataset_path":
             initials = key
             parts.append(f"{Path(value).name}")
             continue
-        # Split the key by '_' and take the first letter of each non-empty piece
-        initials = ''.join(piece[0] for piece in key.split('_') if piece)
-        parts.append(f"{initials}{value}")
+        if len(key.strip()) > 0:
+            # Split the key by '_' and take the first letter of each non-empty piece
+            initials = ''.join(piece[0] for piece in key.split('_') if piece)
+            parts.append(f"{initials}{value}")
+        else:
+            initials = ''.join(piece[0] for piece in value.strip("-").split('_') if piece)
+            parts.append(f"{initials}")
+
     folder_name = "_".join(parts) + args.suffix
     # Construct the full path inside the base directory.
     full_path = os.path.join(base_dir, folder_name)
@@ -64,9 +69,12 @@ def run_test(test_params, gpu_id, args):
     # Build command-line arguments. Override any CSV-specified output_path with our unique folder.
     cmd_args = []
     for arg, value in test_params.items():
-        if arg == "output_path" or len(arg.strip()) == 0:
+        if arg == "output_path" or (len(arg.strip()) == 0 and len(value.strip()) == 0):
             continue
-        cmd_args.append(f"--{arg} {value}")
+        if len(arg.strip()) > 0:
+            cmd_args.append(f"--{arg} {value}")
+        else:
+            cmd_args.append(f"{value}")
     cmd_args.append(f"--output_path {output_folder}")
     
     # Assemble the full command string.
