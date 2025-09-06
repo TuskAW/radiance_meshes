@@ -73,7 +73,7 @@ args.render_train = False
 
 # Light Settings
 args.max_sh_deg = 3
-args.sh_interval = 2000
+args.sh_interval = 1000
 args.sh_step = 1
 
 # iNGP Settings
@@ -128,7 +128,7 @@ args.split_mode = "split_point"
 args.clone_schedule = "quadratic"
 args.min_tet_count = 9
 args.densify_start = 2000
-args.densify_end = 20000
+args.densify_end = 16000
 args.densify_interval = 500
 args.budget = 2_000_000
 args.clone_velocity = 0.0
@@ -146,9 +146,9 @@ args.base_min_t = 0.2
 args.sample_cam = 8
 args.data_device = 'cpu'
 args.lambda_tv = 0.0
-args.density_threshold = 0.001
-args.alpha_threshold = 0.001
-args.contrib_threshold = 0.003
+args.density_threshold = 0.1
+args.alpha_threshold = 0.1
+args.contrib_threshold = 0.01
 
 args.ablate_gradient = False
 args.ablate_circumsphere = False
