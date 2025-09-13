@@ -83,12 +83,13 @@ args.network_lr = 1e-3
 args.final_network_lr = 1e-4
 args.hidden_dim = 64
 args.scale_multi = 0.35 # chosen such that 96% of the distribution is within the sphere 
+args.base_resolution = 16
 args.log2_hashmap_size = 22
 args.per_level_scale = 2
 args.L = 10
+args.hashmap_dim = 16
 args.density_offset = -4
 args.weight_decay = 0.01
-args.hashmap_dim = 16
 args.percent_alpha = 0.02 # preconditioning
 args.spike_duration = 500
 
@@ -314,11 +315,16 @@ for iteration in progress_bar:
         tet_optim.update_triangulation(
             density_threshold=args.density_threshold if iteration > 4500 else 0,
             alpha_threshold=args.alpha_threshold if iteration > 4500 else 0, high_precision=do_freeze)
+        sd = model.state_dict()
+        sd['indices'] = model.indices
+        torch.save(sd, args.output_path / "ckpt_prefreeze.pth")
         if do_freeze:
             del tet_optim
-            model.eval()
-            mask = determine_cull_mask(train_cameras, model, args, device)
-            model.train()
+            # model.eval()
+            # mask = determine_cull_mask(train_cameras, model, args, device)
+            n_tets = model.indices.shape[0]
+            mask = torch.ones((n_tets), device=device, dtype=bool)
+            # model.train()
             print(f"Kept {mask.sum()} tets")
             model, tet_optim = freeze_model(model, mask, args)
             # model, tet_optim = freeze_model(model, **args.as_dict())
@@ -433,6 +439,7 @@ for iteration in progress_bar:
 
             )
             # tet_optim.prune(**args.as_dict())
+            del stats
             gc.collect()
             torch.cuda.empty_cache()
 

@@ -26,9 +26,35 @@ from data.types import BasicPointCloud
 from utils import mesh_util
 from utils.model_util import *
 from models.base_model import BaseModel
+from utils.ingp_util import grid_scale, compute_grid_offsets
 
 torch.set_float32_matmul_precision('high')
 
+def pad_for_tinycudann(x: torch.Tensor, granularity: int):
+    """
+    Pads the input tensor to ensure its total number of elements is a multiple
+    of the tinycudann's required batch size granularity.
+
+    Args:
+        x (torch.Tensor): The input tensor to the tinycudann module.
+        granularity (int): The BATCH_SIZE_GRANULARITY required by tinycudann.
+
+    Returns:
+        tuple: A tuple containing the padded tensor and the number of padded elements.
+    """
+    num_elements = x.shape[0]
+    remainder = num_elements % granularity
+
+    if remainder == 0:
+        return x, 0
+    else:
+        padding_needed = granularity - remainder
+        padding_shape = list(x.shape)
+        padding_shape[0] = padding_needed
+        padding = torch.zeros(padding_shape, dtype=x.dtype, device=x.device)
+        x_padded = torch.cat([x, padding], dim=0)
+        
+        return x_padded, padding_needed
 
 class Model(BaseModel):
     def __init__(self,
@@ -52,8 +78,31 @@ class Model(BaseModel):
             [math.pi, 0],
         ], device=self.device)
         sh_dim = ((1+max_sh_deg)**2-1)*3
-        self.backbone = torch.compile(iNGPDW(sh_dim, **kwargs)).to(self.device)
-        self.chunk_size = 308576
+        # self.backbone = torch.compile(iNGPDW(sh_dim, **kwargs)).to(self.device)
+        self.backbone = iNGPDW(sh_dim, **kwargs).to(self.device)
+
+        config = self.backbone.config
+        offsets, pred_total = compute_grid_offsets(config, 3)
+        total = list(self.backbone.encoding.parameters())[0].shape[0]
+        # ic(offsets, pred_total, total)
+        # assert total == pred_total, f"Pred #params: {pred_total} vs {total}"
+        resolution = grid_scale(
+            config['n_levels']-1, config['per_level_scale'], config['base_resolution'])
+        self.different_size = 0
+        self.nominal_offset_size = offsets[-1] - offsets[-2]
+        for o1, o2 in zip(offsets[:-1], offsets[1:]):
+            if o2 - o1 == self.nominal_offset_size:
+                break
+            else:
+                self.different_size += 1
+        self.offsets = offsets
+
+        backbone = iNGPDW(sh_dim, **kwargs).to(self.device)
+        sample_cv = torch.rand((512, 3)).to(self.device)
+        sample_cr = torch.rand((512, 1)).to(self.device)
+        traced_backbone = torch.jit.trace(backbone, example_inputs=(sample_cv, sample_cr))
+        self.backbone = traced_backbone
+        self.chunk_size = 3085760
         self.mask_values = True
         self.frozen = False
         self.linear = False
@@ -80,20 +129,35 @@ class Model(BaseModel):
             self.vertices, self.indices, self.center, self.scene_scaling)
         return circumcenter
 
+    def compute_batch_features(self, vertices, indices, start, end, circumcenters=None):
+        tets = vertices[indices[start:end]]
+        if circumcenters is None:
+            circumcenter, radius = calculate_circumcenters_torch(tets.double())
+        else:
+            circumcenter = circumcenters[start:end]
+        if self.ablate_circumsphere:
+            circumcenter = tets.mean(dim=1)
+        if self.training:
+            circumcenter += self.alpha*torch.rand_like(circumcenter)
+        normalized = (circumcenter - self.center) / self.scene_scaling
+        radius = torch.linalg.norm(circumcenter - vertices[indices[start:end, 0]], dim=-1)
+        cv, cr = contract_mean_std(normalized, radius / self.scene_scaling)
+        x = (cv/2 + 1)/2
+        # output = checkpoint(self.backbone, x, cr, use_reentrant=True)
+        cr = cr.reshape(-1, 1)
+        x, n = pad_for_tinycudann(x, 256)
+        cr, n = pad_for_tinycudann(cr, 256)
+        N = circumcenter.shape[0]
+        output = self.backbone(x, cr.reshape(-1, 1))
+        output = [v[:N] for v in output]
+        return circumcenter, normalized, *output
+
     def get_cell_values(self, camera: Camera, mask=None,
                         all_circumcenters=None, radii=None):
         indices = self.indices[mask] if mask is not None else self.indices
         vertices = self.vertices
 
-        # vertex_color_raw = eval_sh(
-        #     vertices,
-        #     torch.zeros((vertices.shape[0], 3), device=vertices.device),
-        #     self.vertex_lights.reshape(-1, (self.max_sh_deg+1)**2 - 1, 3),
-        #     camera.camera_center.to(self.device),
-        #     self.current_sh_deg) - 0.5
-
-        outputs = []
-        normed_cc = []
+        features = torch.empty((indices.shape[0], self.feature_dim), device=self.device)
         start = 0
         for start in range(0, indices.shape[0], self.chunk_size):
             end = min(start + self.chunk_size, indices.shape[0])
@@ -103,10 +167,7 @@ class Model(BaseModel):
                                      density, rgb, grd, sh, indices[start:end],
                                      circumcenters,
                                      vertices, self.current_sh_deg, self.max_sh_deg)
-            normed_cc.append(normalized)
-            outputs.append(dvrgbs)
-        features = torch.cat(outputs, dim=0)
-        normed_cc = torch.cat(normed_cc, dim=0)
+            features[start:end] = dvrgbs
         return None, features
 
     @staticmethod
@@ -171,29 +232,13 @@ class Model(BaseModel):
                       max_sh_deg=max_sh_deg, **kwargs)
         return model
 
-    def compute_batch_features(self, vertices, indices, start, end, circumcenters=None):
-        tets = vertices[indices[start:end]]
-        if circumcenters is None:
-            circumcenter, radius = calculate_circumcenters_torch(tets.double())
-        else:
-            circumcenter = circumcenters[start:end]
-        if self.ablate_circumsphere:
-            circumcenter = tets.mean(dim=1)
-        if self.training:
-            circumcenter += self.alpha*torch.rand_like(circumcenter)
-        normalized = (circumcenter - self.center) / self.scene_scaling
-        radius = torch.linalg.norm(circumcenter - vertices[indices[start:end, 0]], dim=-1)
-        cv, cr = contract_mean_std(normalized, radius / self.scene_scaling)
-        x = (cv/2 + 1)/2
-        output = checkpoint(self.backbone, x, cr, use_reentrant=True)
-        return circumcenter, normalized, *output
-
     @staticmethod
     def load_ckpt(path: Path, device):
-        ckpt_path = path / "ckpt.pth"
+        ckpt_path = path / "ckpt_prefreeze.pth"
         config_path = path / "config.json"
         config = Args.load_from_json(str(config_path))
         ckpt = torch.load(ckpt_path)
+        print(ckpt.keys())
         vertices = ckpt['contracted_vertices']
         indices = ckpt["indices"]  # shape (N,4)
         del ckpt["indices"]
@@ -299,6 +344,17 @@ class Model(BaseModel):
         return self.vertices.shape[0]
         
 
+    def compute_weight_decay(self):
+        param = list(self.backbone.encoding.parameters())[0]
+        weight_decay = 0
+        ind = 0
+        for i in range(self.different_size):
+            o = self.offsets[i+1] - self.offsets[i]
+            weight_decay = weight_decay + (param[ind:self.offsets[i+1]]**2).mean()
+            ind += o
+        weight_decay = weight_decay + (param[ind:].reshape(-1, self.nominal_offset_size)**2).mean(dim=1).sum()
+        return weight_decay
+
 class TetOptimizer:
     def __init__(self,
                  model: Model,
@@ -343,12 +399,13 @@ class TetOptimizer:
             {"params": model.backbone.encoding.parameters(), "lr": encoding_lr, "name": "encoding"},
         ], ignore_param_list=["encoding", "network"], betas=[0.9, 0.999], eps=1e-15)
         self.net_optim = optim.CustomAdam([
-            {"params": model.backbone.network.parameters(), "lr": network_lr, "name": "network"},
-            {"params": model.backbone.density_net.parameters(),   "lr": network_lr,  "name": "density"},
-            {"params": model.backbone.color_net.parameters(),     "lr": network_lr,    "name": "color"},
+            # {"params": model.backbone.network.parameters(),   "lr": network_lr,  "name": "density"},
+            # {"params": model.backbone.density_net.parameters(),   "lr": network_lr,  "name": "density"},
+            # {"params": model.backbone.color_net.parameters(),     "lr": network_lr,    "name": "color"},
+            {"params": model.backbone.density_color_net.parameters(),     "lr": network_lr,    "name": "color"},
             {"params": model.backbone.gradient_net.parameters(),  "lr": network_lr, "name": "gradient"},
             {"params": model.backbone.sh_net.parameters(),        "lr": network_lr,       "name": "sh"},
-        ], ignore_param_list=[], betas=[0.9, 0.999])
+        ], ignore_param_list=[], betas=[0.9, 0.999], eps=1e-15)
         self.vert_lr_multi = 1 if model.contract_vertices else float(model.scene_scaling.cpu())
         self.vertex_optim = optim.CustomAdam([
             {"params": [model.contracted_vertices], "lr": self.vert_lr_multi*vertices_lr, "name": "contracted_vertices"},
@@ -481,7 +538,8 @@ class TetOptimizer:
         return None
 
     def regularizer(self, render_pkg):
-        weight_decay = self.weight_decay * sum([(embed.weight**2).mean() for embed in self.model.backbone.encoding.embeddings])
+        # weight_decay = self.weight_decay * sum([(embed.weight**2).mean() for embed in self.model.backbone.encoding.embeddings])
+        weight_decay = self.weight_decay * self.model.compute_weight_decay()
 
         if self.lambda_density > 0 or self.lambda_tv > 0:
             density = self.model.calc_tet_density()

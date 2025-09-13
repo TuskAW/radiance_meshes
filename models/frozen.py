@@ -350,6 +350,9 @@ def bake_from_model(base_model, mask, chunk_size: int = 408_576) -> FrozenTetMod
     int_vertices  = vertices_full[: base_model.num_int_verts]
     ext_vertices  = base_model.ext_vertices.detach()
     indices       = base_model.indices[mask].detach()
+    max_sh_deg = base_model.max_sh_deg
+    center = base_model.center
+    scene_scaling = base_model.scene_scaling
 
     d_list, rgb_list, grd_list, sh_list = [], [], [], []
     for start in range(0, indices.shape[0], chunk_size):
@@ -357,17 +360,22 @@ def bake_from_model(base_model, mask, chunk_size: int = 408_576) -> FrozenTetMod
         _, _, density, rgb, grd, sh = base_model.compute_batch_features(
             vertices_full, indices, start, end
         )
-        d_list.append(density)
-        rgb_list.append(rgb)
-        grd_list.append(grd)
-        sh_list.append(sh)
+        d_list.append(density.detach().cpu())
+        rgb_list.append(rgb.detach().cpu())
+        grd_list.append(grd.detach().cpu())
+        sh_list.append(sh.detach().cpu())
 
-    density  = torch.cat(d_list, 0)
-    rgb      = torch.cat(rgb_list, 0)
-    gradient = torch.cat(grd_list, 0)
+    _offload_model_to_cpu(base_model)
+    del base_model
+    gc.collect()
+    torch.cuda.empty_cache()
+
+    density  = torch.cat(d_list, 0).float()
+    rgb      = torch.cat(rgb_list, 0).float()
+    gradient = torch.cat(grd_list, 0).float()
     sh       = torch.cat(sh_list, 0)
 
-    density, rgb, gradient, sh = (x.clone().detach() for x in (density, rgb, gradient, sh))
+    # density, rgb, gradient, sh = (x.clone().detach() for x in (density, rgb, gradient, sh))
 
     return FrozenTetModel(
         int_vertices=int_vertices.to(device),
@@ -377,9 +385,9 @@ def bake_from_model(base_model, mask, chunk_size: int = 408_576) -> FrozenTetMod
         rgb=rgb.to(device),
         gradient=gradient.to(device),
         sh=sh.to(device),
-        center=base_model.center.detach().to(device),
-        scene_scaling=base_model.scene_scaling.detach().to(device),
-        max_sh_deg=base_model.max_sh_deg,
+        center=center.detach().to(device),
+        scene_scaling=scene_scaling.detach().to(device),
+        max_sh_deg=max_sh_deg,
         chunk_size=chunk_size,
     )
 
