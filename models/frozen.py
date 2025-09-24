@@ -44,6 +44,8 @@ class FrozenTetModel(BaseModel):
         sh: torch.Tensor,                    # (T, ((max_sh_deg+1)**2-1), 3)
         center: torch.Tensor,                # (1, 3)
         scene_scaling: torch.Tensor | float,
+        mask: torch.Tensor,
+        full_indices: torch.Tensor,
         *,
         density_offset: float = -1.0,
         max_sh_deg: int = 2,
@@ -56,6 +58,8 @@ class FrozenTetModel(BaseModel):
         self.register_buffer("interior_vertices", int_vertices)          # immutable
         self.register_buffer("ext_vertices", ext_vertices)
         self.register_buffer("indices", indices.int())
+        self.full_indices = full_indices
+        self.mask = mask
         self.register_buffer("center", center.reshape(1, 3))
         self.register_buffer("scene_scaling", torch.as_tensor(scene_scaling))
 
@@ -353,7 +357,10 @@ def bake_from_model(base_model, mask, chunk_size: int = 408_576) -> FrozenTetMod
     vertices_full = base_model.vertices.detach()
     int_vertices  = vertices_full[: base_model.num_int_verts]
     ext_vertices  = base_model.ext_vertices.detach()
+    full_mask     = base_model.mask.cpu()
+    full_mask[full_mask] = mask.cpu()
     indices       = base_model.indices[mask].detach()
+    full_indices = base_model.full_indices.cpu()
     max_sh_deg = base_model.max_sh_deg
     center = base_model.center
     scene_scaling = base_model.scene_scaling
@@ -379,12 +386,12 @@ def bake_from_model(base_model, mask, chunk_size: int = 408_576) -> FrozenTetMod
     gradient = torch.cat(grd_list, 0).float()
     sh       = torch.cat(sh_list, 0)
 
-    # density, rgb, gradient, sh = (x.clone().detach() for x in (density, rgb, gradient, sh))
-
     return FrozenTetModel(
         int_vertices=int_vertices.to(device),
         ext_vertices=ext_vertices.to(device),
         indices=indices.to(device),
+        full_indices=full_indices,
+        mask=full_mask,
         density=density.to(device),
         rgb=rgb.to(device),
         gradient=gradient.to(device),

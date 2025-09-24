@@ -334,12 +334,16 @@ class Model(BaseModel):
             indices[reverse_mask] = indices[reverse_mask][:, [1, 0, 2, 3]]
 
         # Cull tets with low density
+        self.full_indices = indices.clone()
         self.indices = indices
         if density_threshold > 0 or alpha_threshold > 0:
             tet_density = self.calc_tet_density()
             tet_alpha = self.calc_tet_alpha(mode="min", density=tet_density)
             mask = (tet_density > density_threshold) | (tet_alpha > alpha_threshold)
             self.indices = self.indices[mask]
+            self.mask = mask
+        else:
+            self.mask = torch.ones((self.full_indices.shape[0]), dtype=bool, device='cuda')
             
         torch.cuda.empty_cache()
 

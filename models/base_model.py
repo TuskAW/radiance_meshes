@@ -119,8 +119,6 @@ class BaseModel(nn.Module):
         N = self.indices.shape[0]
         sh_dim = ((self.max_sh_deg+1)**2-1)
 
-        vertices = self.vertices
-        indices = self.indices
         circumcenters, density, base_color_v0_raw, normed_grd, sh = self.compute_features(offset=True)
 
         base_color_v0_raw = base_color_v0_raw.cpu().numpy().astype(np.float32)
@@ -129,7 +127,8 @@ class BaseModel(nn.Module):
         sh_coeffs = sh.reshape(-1, sh_dim, 3).cpu().numpy().astype(np.float32)
 
         tetra_dict = {}
-        tetra_dict["vertex_indices"] = self.indices.cpu().numpy().astype(np.int32)
+        tetra_dict["full_indices"] = self.full_indices.cpu().numpy().astype(np.int32)
+        tetra_dict["mask"] = self.mask.cpu().numpy().astype(np.uint8)
         tetra_dict["s"] = np.ascontiguousarray(densities)
         for i, co in enumerate(["x", "y", "z"]):
             tetra_dict[f"grd_{co}"]         = np.ascontiguousarray(grds[:, i])

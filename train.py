@@ -308,8 +308,8 @@ for iteration in progress_bar:
     if do_delaunay or do_freeze:
         st = time.time()
         tet_optim.update_triangulation(
-            density_threshold=args.density_threshold if iteration > 4500 else 0,
-            alpha_threshold=args.alpha_threshold if iteration > 4500 else 0, high_precision=do_freeze)
+            density_threshold=args.density_threshold if iteration > 1500 else 0,
+            alpha_threshold=args.alpha_threshold if iteration > 1500 else 0, high_precision=do_freeze)
         if do_freeze:
             del tet_optim
             # model.eval()
