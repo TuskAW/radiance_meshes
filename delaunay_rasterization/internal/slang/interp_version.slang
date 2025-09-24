@@ -16,13 +16,37 @@ void print_verts(float4x3 verts) {
 void print_vec(float3 vec) {
     printf("(%f, %f, %f),", vec.x, vec.y, vec.z);
 }
+/* 
+[Differentiable]
+float3 compute_integral(float3 c0, float3 c1, float ddt) {
+    float alpha = safe_exp(-ddt);
+    if (ddt < 1e-6) {
+        return alpha * 0.5*(c0+c1);
+    }
+    float X = (-ddt*alpha + 1 - alpha);
+    float Y = ddt + alpha - 1;
+    return safe_div(X*c0+Y*c1, ddt);
+}
+ */
+[Differentiable]
+float phi(float x) {
+    if (abs(x) < 1e-6) {
+        return 1.0f - x / 2.0f;
+    }
+    // return (1.0f - exp(-x)) / x;
+    return -(safe_expm1(-x)) / x;
+}
 
 [Differentiable]
-float3 compute_integral(float3 c0, float3 c1, float dt, float d) {
-    float alpha = safe_exp(-d*dt);
-    float X = (-d*dt*alpha + 1 - alpha);
-    float Y = (d*dt-1) + alpha;
-    return safe_div(X*c0+Y*c1, d*dt);
+float3 compute_integral(float3 c0, float3 c1, float ddt) {
+    float alpha = safe_exp(-ddt);
+    
+    float phi_val = phi(ddt);
+    
+    float w0 = phi_val - alpha;
+    float w1 = 1.0f - phi_val;
+    
+    return w0 * c0 + w1 * c1;
 }
 
 [Differentiable]
@@ -66,8 +90,9 @@ bool evaluate_tetra_interp(
         float3 c_enter = max(linear_color(g.grd, v_enter) + g.base_color, 0.f);
         float3 c_exit = max(linear_color(g.grd, v_exit) + g.base_color, 0.f);
 
-        float alpha = safe_clip(1.0f - safe_exp(-g.density * dt), 0.f, 1.f);
-        float3 final_color = compute_integral(c_exit, c_enter, dt, g.density);
+        // float alpha = safe_clip(1.0f - safe_exp(-g.density * dt), 0.f, 1.f);
+        float alpha = max(-safe_expm1(-g.density * dt), 0.f);
+        float3 final_color = compute_integral(c_exit, c_enter, dt*g.density);
 
         float4 rgba = {final_color.x,
                        final_color.y,

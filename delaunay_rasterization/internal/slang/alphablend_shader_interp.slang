@@ -148,7 +148,7 @@ DistortionState5 undo_distortion_state(
     old_state.v = new_state.v - self_dist(start, end, d, T);
     return old_state;
 }
-
+/* 
 [Differentiable]
 float4 update_pixel_state(float4 pixel_state_t_nm1, float4 gauss_rgba_t_n)
 {
@@ -167,6 +167,29 @@ float4 undo_pixel_state(float4 pixel_state_t_n, float4 gauss_rgba_t_n)
     }
     float3 color_t_nm1 = pixel_state_t_n.rgb - gauss_rgba_t_n.rgb * transmittance_t_nm1;
     return float4(color_t_nm1, transmittance_t_nm1);
+} */
+
+#define LOG_EPS 1e-6f
+
+[Differentiable]
+float4 update_pixel_state(float4 pixel_state_t_nm1, float4 gauss_rgba_t_n)
+{
+    float transmittance_t_nm1 = exp(pixel_state_t_nm1.a);
+    float3 color_t_n = pixel_state_t_nm1.rgb + gauss_rgba_t_n.rgb * transmittance_t_nm1;
+    float log_transmittance_t_n = pixel_state_t_nm1.a + log(max(LOG_EPS, 1.f - gauss_rgba_t_n.a));
+    
+    return float4(color_t_n, log_transmittance_t_n);
+}
+
+float4 undo_pixel_state(float4 pixel_state_t_n, float4 gauss_rgba_t_n)
+{
+    float log_transmittance_t_nm1 = pixel_state_t_n.a - log(max(LOG_EPS, 1.f - gauss_rgba_t_n.a));
+
+    float transmittance_t_nm1 = exp(log_transmittance_t_nm1);
+    
+    float3 color_t_nm1 = pixel_state_t_n.rgb - gauss_rgba_t_n.rgb * transmittance_t_nm1;
+    
+    return float4(color_t_nm1, log_transmittance_t_nm1);
 }
 
 struct AlphaOut: IDifferentiable {
@@ -176,7 +199,7 @@ struct AlphaOut: IDifferentiable {
 
 [Differentiable]
 AlphaOut update_alpha_out(AlphaOut prev, CtrlPt ctrl) {
-    float T = prev.rgba.a;
+    float T = exp(prev.rgba.a);
     return {
         update_pixel_state(prev.rgba, ctrl.rgba),
         update_distortion_state(prev.distortion_state, T, ctrl.density, ctrl.dist)
@@ -185,7 +208,7 @@ AlphaOut update_alpha_out(AlphaOut prev, CtrlPt ctrl) {
 
 AlphaOut undo_alpha_out(AlphaOut curr, CtrlPt ctrl) {
     float4 pix_state = undo_pixel_state(curr.rgba, ctrl.rgba);
-    float T = pix_state.a;
+    float T = exp(pix_state.a);
     return {
         pix_state,
         undo_distortion_state(curr.distortion_state, T, ctrl.density, ctrl.dist)
@@ -209,7 +232,7 @@ AlphaOut alpha_blend(TensorView<int32_t> sorted_gauss_idx,
                    uint32_t tile_idx_end)
 {
     float2 center_pix_coord = {pix_coord.x+ray_jitter_x, pix_coord.y+ray_jitter_y};
-    float4 curr_pixel_state = float4(0.f, 0.f, 0.f, 1.f);
+    float4 curr_pixel_state = float4(0.f, 0.f, 0.f, 0.f);
     DistortionState5 curr_distortion_state = {0.f, 0.f, 0.f, 0.f, 0.f};
     AlphaOut ao = {
         curr_pixel_state, curr_distortion_state
@@ -255,7 +278,8 @@ AlphaOut alpha_blend(TensorView<int32_t> sorted_gauss_idx,
                     AlphaOut new_ao = update_alpha_out(ao, tetra_ctrl);
 
                     ao = new_ao;
-                    if (new_ao.rgba.a < 0.0001f) {
+                    // if (new_ao.rgba.a < 1./255.f) {
+                    if (new_ao.rgba.a < -9) {
                         thread_active = false;
                         break;
                     }
@@ -510,8 +534,9 @@ VarInfo kern_calc_tet_err(TensorView<int32_t> sorted_gauss_idx,
                     // calc grad scale to remove floaters
                     float grad_scale = 1;//min(1, tetra_ctrl.dist.x*tetra_ctrl.dist.x);
 
-                    float T = grad_scale * ao.rgba.a * tetra_ctrl.rgba.a;
-                    float T_p = grad_scale * ao.rgba.a;
+                    float trans = exp(ao.rgba.a);
+                    float T = grad_scale * trans * tetra_ctrl.rgba.a;
+                    float T_p = grad_scale * trans;
                     // grow and split quantities
                     float err = pixel_err;
                     float mismatch = pixel_err;
@@ -549,7 +574,7 @@ VarInfo kern_calc_tet_err(TensorView<int32_t> sorted_gauss_idx,
                     tet_count.InterlockedMax(uint2(g_idx, 1), T_int, old_ival);
 
                     ao = new_ao;
-                    if (new_ao.rgba.a < 1 / 255.f) {
+                    if (new_ao.rgba.a < -9) {
                         // This Splat never registred so we subtract it before we break.
                         // local_n_contrib--;
                         thread_active = false;
