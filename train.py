@@ -172,7 +172,7 @@ else:
     model = Model.init_from_pcd(scene_info.point_cloud, train_cameras, device,
                                 current_sh_deg = args.max_sh_deg if args.sh_interval <= 0 else 0,
                                 **args.as_dict())
-min_t = args.min_t = args.base_min_t# * model.scene_scaling.item()
+min_t = args.min_t = args.base_min_t * model.scene_scaling.item()
 
 tet_optim = TetOptimizer(model, **args.as_dict())
 if args.eval:
