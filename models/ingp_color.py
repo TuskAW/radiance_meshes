@@ -66,11 +66,14 @@ class Model(BaseModel):
         self.density_offset = density_offset
         self.max_sh_deg = max_sh_deg
         self.current_sh_deg = current_sh_deg
-        self.dir_offset = torch.tensor([
+        self.dir_offset = torch.randn((max_sh_deg, 2), device=self.device)
+        self.dir_offset[:2] = torch.tensor([
             [0, 0],
             [math.pi, 0],
         ], device=self.device)
-        sh_dim = ((1+max_sh_deg)**2-1)*3
+
+        # sh_dim = ((1+max_sh_deg)**2-1)*3
+        sh_dim = max_sh_deg * 6
 
         self.backbone = torch.compile(iNGPDW(sh_dim, **kwargs)).to(self.device)
 
@@ -155,12 +158,18 @@ class Model(BaseModel):
             end = min(start + self.chunk_size, indices.shape[0])
             circumcenters, normalized, density, rgb, grd, sh = self.compute_batch_features(
                 vertices, indices, start, end, circumcenters=all_circumcenters)
-            dvrgbs = activate_output(camera.camera_center.to(self.device),
+            dvrgbs = activate_output_lights(camera.camera_center.to(self.device),
                                      density, rgb, grd,
-                                     sh.reshape(-1, (self.max_sh_deg+1)**2 - 1, 3),
+                                     sh,
                                      indices[start:end],
                                      circumcenters,
-                                     vertices, self.current_sh_deg, self.max_sh_deg)
+                                     vertices, self.current_sh_deg, self.max_sh_deg, self.dir_offset)
+            # dvrgbs = activate_output(camera.camera_center.to(self.device),
+                                    #  density, rgb, grd,
+                                    #  sh.reshape(-1, (self.max_sh_deg+1)**2 - 1, 3),
+                                    #  indices[start:end],
+                                    #  circumcenters,
+                                    #  vertices, self.current_sh_deg, self.max_sh_deg)
             features[start:end] = dvrgbs
         return None, features
 

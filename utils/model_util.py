@@ -5,7 +5,8 @@ from utils import hashgrid
 from icecream import ic
 import tinycudann as tcnn
 
-from utils.safe_math import safe_exp, safe_div, safe_sqrt
+from utils.graphics_utils import l2_normalize_th
+from utils.safe_math import safe_exp, safe_div, safe_sqrt, safe_cos, safe_sin
 from sh_slang.eval_sh_py import eval_sh
 from utils.hashgrid import HashEmbedderOptimized
 from utils.topo_utils import calculate_circumcenters_torch
@@ -91,6 +92,34 @@ def offset_normalize(rgb, grd, circumcenters, tets):
 
     base_color_v0_raw = vcolors[:, 0]
     return base_color_v0_raw, normed_grd
+
+def to_sphere(coordinates):
+    return torch.stack([
+        safe_cos(coordinates[..., 0]) * safe_sin(coordinates[..., 1]),
+        safe_sin(coordinates[..., 0]) * safe_sin(coordinates[..., 1]),
+        safe_cos(coordinates[..., 1]),
+    ], dim=-1)
+
+@torch.jit.script
+def activate_output_lights(camera_center, density, rgb, grd, lights,
+                    indices, circumcenters, vertices,
+                    current_lights:int, max_lights:int, dir_offset):
+    tets = vertices[indices]
+    base_color_v0_raw, normed_grd = offset_normalize(rgb, grd, circumcenters, tets)
+    lights = lights.reshape(-1, max_lights, 3+1+2)
+
+    light_colors = lights[:, :, :3]
+    light_roughness = 4*safe_exp(lights[:, :, 3:4]).clip(max=100)
+    reflection_dirs = lights[:, :, 4:6] + dir_offset.reshape(1, -1, 2)
+    reflection_dirs = to_sphere(reflection_dirs)
+    view_dirs = l2_normalize_th(tets.mean(dim=1) - camera_center).reshape(-1, 1, 3)
+    similarity = (reflection_dirs * view_dirs).sum(dim=-1, keepdim=True) # -1, num_lights, 1
+    activated_lights = light_colors * safe_exp(light_roughness * (similarity - 1)) # -1, num_lights, 3
+    tet_color_raw = base_color_v0_raw + activated_lights[:, :current_lights].sum(dim=1)
+
+    base_color_v0 = torch.nn.functional.softplus(tet_color_raw.reshape(-1, 3, 1), beta=10)
+    features = torch.cat([density, base_color_v0.reshape(-1, 3), normed_grd.reshape(-1, 3)], dim=1)
+    return features.float()
 
 @torch.jit.script
 def activate_output(camera_center, density, rgb, grd, sh, indices, circumcenters, vertices, current_sh_deg:int, max_sh_deg:int):

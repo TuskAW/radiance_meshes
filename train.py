@@ -74,7 +74,7 @@ args.render_train = False
 
 # Light Settings
 args.max_sh_deg = 3
-args.sh_interval = 0
+args.sh_interval = 1000
 args.sh_step = 1
 
 # iNGP Settings
