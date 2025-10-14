@@ -1,6 +1,7 @@
 import intersect;
 import utils;
 import safe_math;
+import camera;
 
 struct SplatTetrahedra_interp : IDifferentiable
 {
@@ -38,6 +39,18 @@ float phi(float x) {
 }
 
 [Differentiable]
+float compute_integral1D(float c0, float c1, float ddt) {
+    float alpha = safe_exp(-ddt);
+    
+    float phi_val = phi(ddt);
+    
+    float w0 = phi_val - alpha;
+    float w1 = 1.0f - phi_val;
+    
+    return w0 * c0 + w1 * c1;
+}
+
+[Differentiable]
 float3 compute_integral(float3 c0, float3 c1, float ddt) {
     float alpha = safe_exp(-ddt);
     
@@ -65,8 +78,7 @@ inline float3 linear_color(float3 grad, float3 v)
 [Differentiable]
 bool evaluate_tetra_interp(
     in SplatTetrahedra_interp g, 
-    in float3 ray_o,
-    in float3 ray_d,
+    in Ray ray,
     no_diff in float t_min,
     out CtrlPt ctrl_pt)
 {
@@ -74,19 +86,20 @@ bool evaluate_tetra_interp(
 
     float4x3 verts = float4x3(g.tet.verts[0], g.tet.verts[1], g.tet.verts[2], g.tet.verts[3]);
 
+    float3 enter_norm, exit_norm;
     bool hit = ray_tetrahedron_intersect_fused(
-        ray_o, ray_d, verts, dist);
+        ray.o, ray.d, verts, dist, enter_norm, exit_norm);
 
     float enter = dist.x;
     float exit = max(dist.y, enter);
     float dt = max(dist.y - enter, 0.0f);
 
     if (!hit || dt < 1e-5f) {
-        ctrl_pt = { (float4)(0.f, 0.f, 0.f, 0.f), {0.f, 0.f}, g.density };
+        ctrl_pt = { {0.f, 0.f, 0.f, 0.f}, {0.f, 0.f}, g.density, {0.f, 0.f, 0.f, 0.f} };
         return false;
     } else {
-        float3 v_enter = enter * ray_d + ray_o - verts[0];
-        float3 v_exit = exit * ray_d + ray_o - verts[0];
+        float3 v_enter = enter * ray.d + ray.o - verts[0];
+        float3 v_exit = exit * ray.d + ray.o - verts[0];
         float3 c_enter = max(linear_color(g.grd, v_enter) + g.base_color, 0.f);
         float3 c_exit = max(linear_color(g.grd, v_exit) + g.base_color, 0.f);
 
@@ -98,7 +111,10 @@ bool evaluate_tetra_interp(
                        final_color.y,
                        final_color.z,
                        g.density * dt};
-        ctrl_pt = { rgba, {enter, exit}, g.density };
+        float3 rendered_norm = alpha*l2_normalize(enter_norm);
+        float depth = safe_div(compute_integral1D(enter, exit, dt*g.density), ray.ortho);
+        // float depth = compute_integral1D(enter, exit, dt*g.density);
+        ctrl_pt = { rgba, {enter, exit}, g.density, float4(rendered_norm, depth)};
         return true;
     }
 }

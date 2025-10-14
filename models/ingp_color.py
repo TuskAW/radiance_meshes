@@ -377,8 +377,6 @@ class TetOptimizer:
             {"params": [model.contracted_vertices], "lr": self.vert_lr_multi*vertices_lr, "name": "contracted_vertices"},
         ])
         self.model = model
-        self.vertex_rgbs_param_grad = None
-        self.vertex_grad = None
         self.split_std = split_std
 
         self.alpha_sched = get_expon_lr_func(lr_init=percent_alpha*float(model.scene_scaling.cpu()),

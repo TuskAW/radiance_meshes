@@ -19,6 +19,8 @@ from utils import cam_util
 from utils.train_util import *
 # from models.vertex_color import Model, TetOptimizer
 from models.ingp_color import Model, TetOptimizer
+# from models.frozen import FrozenTetModel as Model
+# from models.frozen import FrozenTetOptimizer as TetOptimizer
 from models.frozen import freeze_model
 # from models.ingp_density import Model, TetOptimizer
 # from models.frozen_vertices import freeze_model
@@ -34,6 +36,8 @@ from torch.optim.lr_scheduler import ExponentialLR, LinearLR, ChainedScheduler
 import gc
 from utils.densification import collect_render_stats, apply_densification, determine_cull_mask
 import mediapy
+from utils.loss_utils import calculate_norm_loss, depth_to_normals
+from icecream import ic
 
 torch.set_num_threads(1)
 
@@ -109,11 +113,12 @@ args.vertices_lr_delay_multi = 1e-8
 args.delaunay_interval = 10
 
 args.freeze_start = 18000
-args.freeze_lr = 1e-3
+args.freeze_lr = 1e-2
 args.final_freeze_lr = 1e-4
 
 # Distortion Settings
 args.lambda_dist = 1e-4
+args.lambda_norm = 1e-3
 
 # Clone Settings
 args.num_samples = 200
@@ -172,6 +177,8 @@ else:
     model = Model.init_from_pcd(scene_info.point_cloud, train_cameras, device,
                                 current_sh_deg = args.max_sh_deg if args.sh_interval <= 0 else 0,
                                 **args.as_dict())
+model = model.to(device)
+print(model.device)
 min_t = args.min_t = args.base_min_t * model.scene_scaling.item()
 
 tet_optim = TetOptimizer(model, **args.as_dict())
@@ -248,12 +255,12 @@ fig = tpl.figure()
 fig.plot(dschedule, targets, width=100, height=20)
 fig.show()
 
-print("Encoding LR")
-xs = list(range(args.iterations))
-ys = [tet_optim.encoder_scheduler_args(x) for x in xs]
-fig = tpl.figure()
-fig.plot(xs, ys, width=150, height=20)
-fig.show()
+# print("Encoding LR")
+# xs = list(range(args.iterations))
+# ys = [tet_optim.encoder_scheduler_args(x) for x in xs]
+# fig = tpl.figure()
+# fig.plot(xs, ys, width=150, height=20)
+# fig.show()
 
 densification_sampler = SimpleSampler(len(train_cameras), args.num_samples)
 
@@ -297,24 +304,6 @@ for iteration in progress_bar:
     do_sh_up = not args.sh_interval == 0 and iteration % args.sh_interval == 0 and iteration > 0
     do_sh_step = iteration % args.sh_step == 0
 
-    if do_delaunay or do_freeze:
-        st = time.time()
-        tet_optim.update_triangulation(
-            density_threshold=args.density_threshold if iteration > args.threshold_start else 0,
-            alpha_threshold=args.alpha_threshold if iteration > args.threshold_start else 0, high_precision=do_freeze)
-        if do_freeze:
-            del tet_optim
-            # model.eval()
-            # mask = determine_cull_mask(train_cameras, model, args, device)
-            n_tets = model.indices.shape[0]
-            mask = torch.ones((n_tets), device=device, dtype=bool)
-            # model.train()
-            print(f"Kept {mask.sum()} tets")
-            model, tet_optim = freeze_model(model, mask, args)
-            # model, tet_optim = freeze_model(model, **args.as_dict())
-            gc.collect()
-            torch.cuda.empty_cache()
-
     if len(inds) == 0:
         inds = list(range(len(train_cameras)))
         random.shuffle(inds)
@@ -349,10 +338,12 @@ for iteration in progress_bar:
     reg = tet_optim.regularizer(render_pkg, **args.as_dict())
     ssim_loss = (1-fused_ssim(image.unsqueeze(0), target.unsqueeze(0))).clip(min=0, max=1)
     dl_loss = render_pkg['distortion_loss']
+    norm_loss = calculate_norm_loss(render_pkg['xyzd'], camera.fx, camera.fy)
     loss = (1-args.lambda_ssim)*l1_loss + \
            args.lambda_ssim*ssim_loss + \
            reg + \
-           args.lambda_dist * dl_loss
+           args.lambda_dist * dl_loss + \
+           args.lambda_norm * norm_loss
 
     if args.use_bilateral_grid:
         tvloss = args.lambda_tv_grid * total_variation_loss(bil_grids.grids)
@@ -360,6 +351,9 @@ for iteration in progress_bar:
 
     mask = render_pkg['mask']
     st = time.time()
+
+    old_vertices = model.vertices.detach().clone()
+    old_indices = model.full_indices.detach().clone()
 
     loss.backward()
 
@@ -384,14 +378,14 @@ for iteration in progress_bar:
     if do_sh_up:
         model.sh_up()
 
-    # if iteration % 10 == 0:
-    #     with torch.no_grad():
-    #         render_pkg = render(sample_camera, model, min_t=min_t, tile_size=args.tile_size)
-    #         sample_image = render_pkg['render']
-    #         sample_image = sample_image.permute(1, 2, 0)
-    #         sample_image = (sample_image.detach().cpu().numpy()*255).clip(min=0, max=255).astype(np.uint8)
-    #         sample_image = cv2.cvtColor(sample_image, cv2.COLOR_RGB2BGR)
-    #         video_writer.write(pad_image2even(sample_image))
+    if iteration % 1 == 0:
+        with torch.no_grad():
+            render_pkg = render(sample_camera, model, min_t=min_t, tile_size=args.tile_size)
+            sample_image = render_pkg['render']
+            sample_image = sample_image.permute(1, 2, 0)
+            sample_image = (sample_image.detach().cpu().numpy()*255).clip(min=0, max=255).astype(np.uint8)
+            sample_image = cv2.cvtColor(sample_image, cv2.COLOR_RGB2BGR)
+            video_writer.write(pad_image2even(sample_image))
 
     if do_cloning and not model.frozen:
         with torch.no_grad():
@@ -402,6 +396,17 @@ for iteration in progress_bar:
             sample_image = sample_image.permute(1, 2, 0)
             sample_image = (sample_image.detach().cpu().numpy()*255).clip(min=0, max=255).astype(np.uint8)
             sample_image = cv2.cvtColor(sample_image, cv2.COLOR_RGB2BGR)
+
+            pred_normal = depth_to_normals(render_pkg['xyzd'][..., 3:], camera.fx, camera.fy)
+            vis_depth, _ = visualize_depth_numpy(render_pkg['xyzd'][..., 3:].cpu().numpy())
+            vis_normal = (render_pkg['xyzd'][..., :3] * 127 + 128).clamp(0, 255).byte().cpu().numpy()
+            vis_pred_normal = (pred_normal * 127 + 128).clamp(0, 255).byte().cpu().numpy()
+            imageio.imwrite(args.output_path / f"normal{iteration}.png",
+                            vis_normal)
+            imageio.imwrite(args.output_path / f"pred_normal{iteration}.png",
+                            vis_pred_normal)
+            imageio.imwrite(args.output_path / f"depth{iteration}.png",
+                            vis_depth)
             # video_writer.write(pad_image2even(sample_image))
 
             gc.collect()
@@ -425,6 +430,24 @@ for iteration in progress_bar:
             )
             # tet_optim.prune(**args.as_dict())
             del stats
+            gc.collect()
+            torch.cuda.empty_cache()
+
+    if do_delaunay or do_freeze:
+        st = time.time()
+        # tet_optim.update_triangulation(old_indices=old_indices, old_vertices = old_vertices,
+        #     density_threshold=args.density_threshold if iteration > args.threshold_start else 0,
+        #     alpha_threshold=args.alpha_threshold if iteration > args.threshold_start else 0, high_precision=do_freeze)
+        if do_freeze:
+            del tet_optim
+            # model.eval()
+            # mask = determine_cull_mask(train_cameras, model, args, device)
+            n_tets = model.indices.shape[0]
+            mask = torch.ones((n_tets), device=device, dtype=bool)
+            # model.train()
+            print(f"Kept {mask.sum()} tets")
+            model, tet_optim = freeze_model(model, mask, args)
+            # model, tet_optim = freeze_model(model, **args.as_dict())
             gc.collect()
             torch.cuda.empty_cache()
 

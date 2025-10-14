@@ -8,6 +8,7 @@ static const float eps = 1e-7;
 struct Ray : IDifferentiable
 {
     float3 o, d;
+    float ortho;
 }
 
 struct TensorCamera {
@@ -338,9 +339,11 @@ Ray get_ray(Camera cam, float2 center_pix_coord)
     // A 3x3 view matrix from a 4x4 transform is typically the top-left 3x3, transposed.
     float3x3 V_rot = construct_view_matrix(cam.world_view_transform);
     
+    float3 raw_ray_d = mul(V_rot, dir_cam);
     Ray ray;
-    ray.d = normalize(mul(V_rot, dir_cam));
+    ray.d = normalize(raw_ray_d);
     ray.o = cam.position + ray.d * cam.min_t; // Start ray slightly in front
+    ray.ortho = length(raw_ray_d);
     
     return ray;
 }

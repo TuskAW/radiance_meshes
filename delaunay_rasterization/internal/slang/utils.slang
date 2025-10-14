@@ -155,6 +155,7 @@ struct CtrlPt: IDifferentiable {
     float4 rgba;
     float2 dist;
     float density;
+    float4 xyzd;
 };
 
 [Differentiable]
@@ -165,9 +166,10 @@ CtrlPt evaluate_tetra(in SplatTetrahedra g,
     // float2 dist = ray_tetrahedron_intersect(ray_o, ray_d, g.tet);
     // float2 dist = ray_tetrahedron_intersect(ray_o, ray_d, g.tet);
     float2 dist;
+    float3 enter_norm, exit_norm;
     // bool hit = cyrusBeckTetrahedronShearScale(
     bool hit = ray_tetrahedron_intersect_fused(
-        ray_o, ray_d, float4x3(g.tet.verts[0], g.tet.verts[1], g.tet.verts[2], g.tet.verts[3]), dist);
+        ray_o, ray_d, float4x3(g.tet.verts[0], g.tet.verts[1], g.tet.verts[2], g.tet.verts[3]), dist, enter_norm, exit_norm);
     float intersection_t = (dist.x + dist.y)/2.f;
     float dt = max(abs(dist.y - dist.x), 0.0f);
     // float2 dist = cyrusBeckTetrahedronShearScale(ray_o, ray_d, g.tet.verts[0], g.tet.verts[1], g.tet.verts[2], g.tet.verts[3]);

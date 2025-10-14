@@ -223,7 +223,10 @@ bool ray_triangle_intersect2(in float3 ray_origin,
 
 // Ray-tetrahedron intersection function
 [Differentiable]
-bool ray_tetrahedron_intersect(float3 orig, float3 dir, Tetrahedra g, float2 dist) {
+bool ray_tetrahedron_intersect(
+    in float3 orig, in float3 dir, in Tetrahedra g,
+    out float2 dist, out float3 norm)
+{
     float3 v0 = g.verts[0];
     float3 v1 = g.verts[1];
     float3 v2 = g.verts[2];
@@ -364,7 +367,9 @@ float2 ray_tetrahedron_intersect_2D(float2 pixelPos, float tmin, Tetrahedra g) {
 bool ray_tetrahedron_intersect_fused(
     float3 orig, float3 dir,
     float4x3 verts,
-    inout float2 t)
+    inout float2 t,
+    out float3 enter_norm,
+    out float3 exit_norm)
 {
     // --------------------------------------------------------------------
     // 1. Compute plane equations for the 4 faces (outward normals)
@@ -449,6 +454,8 @@ bool ray_tetrahedron_intersect_fused(
     float t_enter = -1e30f;
     float t_exit  = 1e30f;
     float eps     = 1e-10f;
+    enter_norm = {0.f, 0.f, 0.f};
+    exit_norm = {0.f, 0.f, 0.f};
 
     // --------------------------------------------------------------------
     // 3. Clip against Plane 0
@@ -470,12 +477,14 @@ bool ray_tetrahedron_intersect_fused(
                 // Ray entering at this t
                 if (tplane > t_enter) {
                     t_enter = tplane;
+                    enter_norm = n0;
                 }
             }
             else {
                 // Ray exiting
                 if (tplane < t_exit) {
                     t_exit = tplane;
+                    exit_norm = n0;
                 }
             }
         }
@@ -499,11 +508,13 @@ bool ray_tetrahedron_intersect_fused(
             if (denom1 < 0.0f) {
                 if (tplane > t_enter) {
                     t_enter = tplane;
+                    enter_norm = n1;
                 }
             }
             else {
                 if (tplane < t_exit) {
                     t_exit = tplane;
+                    exit_norm = n1;
                 }
             }
         }
@@ -527,11 +538,13 @@ bool ray_tetrahedron_intersect_fused(
             if (denom2 < 0.0f) {
                 if (tplane > t_enter) {
                     t_enter = tplane;
+                    enter_norm = n2;
                 }
             }
             else {
                 if (tplane < t_exit) {
                     t_exit = tplane;
+                    exit_norm = n2;
                 }
             }
         }
@@ -555,11 +568,13 @@ bool ray_tetrahedron_intersect_fused(
             if (denom3 < 0.0f) {
                 if (tplane > t_enter) {
                     t_enter = tplane;
+                    enter_norm = n3;
                 }
             }
             else {
                 if (tplane < t_exit) {
                     t_exit = tplane;
+                    exit_norm = n3;
                 }
             }
         }

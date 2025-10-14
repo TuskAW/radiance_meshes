@@ -5,10 +5,12 @@ import gc
 import tinyplypy
 import numpy as np
 from pathlib import Path
+import open3d as o3d
 
+from gdel3d import Del
 from data.camera import Camera
 from utils.topo_utils import (
-    build_tv_struct, max_density_contrast
+    build_tv_struct, max_density_contrast, fibonacci_spiral_on_sphere, tet_volumes
 )
 from utils.model_util import activate_output
 from utils import optim
@@ -18,6 +20,7 @@ from utils.train_util import get_expon_lr_func, SpikingLR
 from utils import mesh_util
 from utils.args import Args
 from models.base_model import BaseModel
+from dtlookup import lookup_inds
 
 
 class FrozenTetModel(BaseModel):
@@ -47,7 +50,6 @@ class FrozenTetModel(BaseModel):
         mask: torch.Tensor,
         full_indices: torch.Tensor,
         *,
-        density_offset: float = -1.0,
         max_sh_deg: int = 2,
         chunk_size: int = 408_576,
         **kwargs
@@ -55,8 +57,8 @@ class FrozenTetModel(BaseModel):
         super().__init__()
 
         # geometry ----------------------------------------------------------------
-        self.register_buffer("interior_vertices", int_vertices)          # immutable
-        self.register_buffer("ext_vertices", ext_vertices)
+        self.interior_vertices = nn.Parameter(int_vertices.cuda(), requires_grad=True)          # immutable
+        self.register_buffer("ext_vertices", ext_vertices.cuda())
         self.register_buffer("indices", indices.int())
         self.full_indices = full_indices
         self.mask = mask
@@ -72,13 +74,13 @@ class FrozenTetModel(BaseModel):
         self.sh        = nn.Parameter(sh.half(), requires_grad=True)         # (T, SH, 3)
 
         # misc --------------------------------------------------------------------
-        self.density_offset  = density_offset
         self.max_sh_deg      = max_sh_deg
         self.chunk_size      = chunk_size
         self.device          = self.density.device
+        self.sh_dim = ((1+max_sh_deg)**2-1)*3
 
-        self.mask_values = True
-        self.frozen = True
+        self.mask_values = False
+        self.frozen = False
         self.linear = False
         self.feature_dim = 7
 
@@ -139,7 +141,6 @@ class FrozenTetModel(BaseModel):
             sh=sh.to(device),
             center=center.to(device),
             scene_scaling=scene_scaling.to(device),
-            density_offset=config.density_offset,
             max_sh_deg=config.max_sh_deg,
             chunk_size=config.chunk_size if hasattr(config, 'chunk_size') else 408_576,
         )
@@ -169,13 +170,14 @@ class FrozenTetModel(BaseModel):
         mask: Optional[torch.Tensor] = None,
         circumcenters: Optional[torch.Tensor] = None,
     ):
+
         if circumcenters is None:
             circumcenter = pre_calc_cell_values(
                 vertices, indices
             )
         else:
             circumcenter = circumcenters
-        normalized = (circumcenter - self.center) / self.scene_scaling
+        print(self.density.grad)
 
         if mask is not None:
             density  = self.density[mask]
@@ -188,7 +190,7 @@ class FrozenTetModel(BaseModel):
             rgb      = self.rgb
             sh       = self.sh
 
-        return circumcenter, normalized, density, rgb, grd, sh
+        return circumcenter, None, density, rgb, grd, sh
 
     def compute_features(self, offset=False):
         vertices = self.vertices
@@ -226,11 +228,36 @@ class FrozenTetModel(BaseModel):
         )
         return None, cell_output
 
-    # ------------------------------------------------------------------
-    # geometry is frozen
-    # ------------------------------------------------------------------
-    def update_triangulation(self, *_, **__):
-        return None
+    @torch.no_grad()
+    def update_triangulation(self, old_vertices, old_indices, high_precision=False, density_threshold=0.0, alpha_threshold=0.0):
+        return
+        torch.cuda.empty_cache()
+        verts = self.vertices
+        if high_precision:
+            indices_np = Delaunay(verts.detach().cpu().numpy()).simplices.astype(np.int32)
+            # self.indices = torch.tensor(indices_np, device=verts.device).int().cuda()
+        else:
+            v = Del(verts.shape[0])
+            indices_np, prev = v.compute(verts.detach().cpu().double())
+            indices_np = indices_np.numpy()
+            indices_np = indices_np[(indices_np < verts.shape[0]).all(axis=1)]
+            del prev
+        
+
+        # Ensure volume is positive
+        indices = torch.as_tensor(indices_np).cuda()
+        vols = tet_volumes(verts[indices])
+        reverse_mask = vols < 0
+        if reverse_mask.sum() > 0:
+            indices[reverse_mask] = indices[reverse_mask][:, [1, 0, 2, 3]]
+
+        new_centroids = verts[indices].mean(dim=1)
+        new_inds = lookup_inds(old_indices, old_vertices, new_centroids).clip(min=0)
+
+        # Cull tets with low density
+        self.full_indices = indices.clone()
+        self.indices = indices
+        return new_inds
 
     @property
     def num_int_verts(self):
@@ -262,48 +289,63 @@ class FrozenTetOptimizer:
         *,
         freeze_lr:   float = 1e-3,
         final_freeze_lr:   float = 1e-4,
-        weight_decay: float = 1e-10,
-        lambda_tv:    float = 0.0,
-        lambda_density: float = 0.0,
         lr_delay_multi=1e-8,
         lr_delay=0,
+        vertices_lr: float=4e-4,
+        final_vertices_lr: float=4e-7,
+        vert_lr_delay: int = 500,
+        vertices_lr_delay_multi: float=0.01,
         freeze_start: int = 15000,
         iterations: int = 30000,
+        spike_duration: int = 20,
+        densify_interval: int = 500,
+        densify_end: int = 15000,
+        densify_start: int = 2000,
+        split_std: float = 0.5,
         **kwargs
     ) -> None:
         self.model = model
-        self.weight_decay   = weight_decay
-        self.lambda_tv      = lambda_tv
-        self.lambda_density = lambda_density
+        self.split_std = split_std
 
         # ------------------------------------------------------------------
         # single optimiser with four parameter groups
         # ------------------------------------------------------------------
-        self.optim = torch.optim.RMSprop([
+        self.optim = optim.CustomAdam([
         # self.optim = torch.optim.Adam([
             {"params": [model.density],  "lr": freeze_lr,  "name": "density"},
             {"params": [model.rgb],      "lr": freeze_lr,    "name": "color"},
             {"params": [model.gradient], "lr": freeze_lr, "name": "gradient"},
         ])
-        self.sh_optim = torch.optim.RMSprop([
+        self.sh_optim = optim.CustomAdam([
             {"params": [model.sh],       "lr": freeze_lr,       "name": "sh"},
         ], eps=1e-6)
+        self.vert_lr_multi = float(model.scene_scaling.cpu())
+        self.vertex_optim = optim.CustomAdam([
+            {"params": [model.interior_vertices], "lr": self.vert_lr_multi*vertices_lr, "name": "interior_vertices"},
+        ])
         self.freeze_start = freeze_start
         self.scheduler = get_expon_lr_func(lr_init=freeze_lr,
                                            lr_final=final_freeze_lr,
                                            lr_delay_mult=lr_delay_multi,
-                                           max_steps=iterations - self.freeze_start,
+                                           max_steps=iterations,
                                            lr_delay_steps=lr_delay)
+
+        self.vertex_lr = self.vert_lr_multi*vertices_lr
+        base_vertex_scheduler = get_expon_lr_func(lr_init=self.vertex_lr,
+                                                lr_final=self.vert_lr_multi*final_vertices_lr,
+                                                lr_delay_mult=vertices_lr_delay_multi,
+                                                max_steps=iterations,
+                                                lr_delay_steps=vert_lr_delay)
+
+        self.vertex_scheduler_args = base_vertex_scheduler
+        self.vertex_scheduler_args = SpikingLR(
+            spike_duration, freeze_start, base_vertex_scheduler,
+            densify_start, densify_interval, densify_end,
+            self.vertex_lr, self.vertex_lr)
+            # self.vertex_lr, self.vertex_lr)
 
         # alias for external training scripts that expected these names
         self.net_optim   = self.optim
-        self.vertex_optim = None  # geometry is frozen
-
-        # TV structure (pairs & face areas) for regulariser ----------------
-        if self.lambda_tv > 0:
-            self.pairs, self.face_area = build_tv_struct(
-                self.model.vertices.detach(), self.model.indices, device=model.device
-            )
 
     # ------------------------------------------------------------------
     # public helpers ----------------------------------------------------
@@ -322,19 +364,21 @@ class FrozenTetOptimizer:
         self.zero_grad()
 
     def update_learning_rate(self, iteration):
-        ''' Learning rate scheduling per step '''
-        self.iteration = iteration
-        for param_group in self.optim.param_groups:
-            lr = self.scheduler(iteration - self.freeze_start)
-            param_group['lr'] = lr
-
-        for param_group in self.sh_optim.param_groups:
-            lr = self.scheduler(iteration - self.freeze_start)
-            param_group['lr'] = lr
-
-    @torch.no_grad()
-    def split(self, clone_indices, split_point, split_mode):
-        print("Split called on frozen optimizer")
+        # ''' Learning rate scheduling per step '''
+        # self.iteration = iteration
+        # for param_group in self.optim.param_groups:
+        #     lr = self.scheduler(iteration)
+        #     param_group['lr'] = lr
+        #
+        # for param_group in self.sh_optim.param_groups:
+        #     lr = self.scheduler(iteration)
+        #     param_group['lr'] = lr
+        # for param_group in self.vertex_optim.param_groups:
+        #     if param_group["name"] == "interior_vertices":
+        #         lr = self.vertex_scheduler_args(iteration)
+        #         self.vertex_lr = lr
+        #         param_group['lr'] = lr
+        pass
 
     # ------------------------------------------------------------------
     # regularisers ------------------------------------------------------
@@ -358,6 +402,55 @@ class FrozenTetOptimizer:
         #     tv_loss = 0.0
 
         return 0.0
+
+    def add_points(self, new_verts: torch.Tensor, raw_verts=False):
+        self.model.interior_vertices = self.vertex_optim.cat_tensors_to_optimizer(dict(
+            interior_vertices = new_verts
+        ))['interior_vertices']
+        self.model.update_triangulation()
+
+    @torch.no_grad()
+    def split(self, clone_indices, split_point, split_mode, split_std, **kwargs):
+        device = self.model.device
+        clone_vertices = self.model.vertices[clone_indices]
+
+        if split_mode == "circumcenter":
+            circumcenters, radius = calculate_circumcenters_torch(clone_vertices)
+            radius = radius.reshape(-1, 1)
+            circumcenters = circumcenters.reshape(-1, 3)
+            sphere_loc = sample_uniform_in_sphere(circumcenters.shape[0], 3).to(device)
+            r = torch.randn((clone_indices.shape[0], 1), device=self.model.device)
+            r[r.abs() < 1e-2] = 1e-2
+            sampled_radius = (r * self.split_std + 1) * radius
+            new_vertex_location = l2_normalize_th(sphere_loc) * sampled_radius + circumcenters
+        elif split_mode == "barycenter":
+            barycentric_weights = 0.25*torch.ones((clone_indices.shape[0], clone_indices.shape[1], 1), device=device).clip(min=0.01, max=0.99)
+            new_vertex_location = (self.model.vertices[clone_indices] * barycentric_weights).sum(dim=1)
+        elif split_mode == "barycentric":
+            barycentric = torch.rand((clone_indices.shape[0], clone_indices.shape[1], 1), device=device).clip(min=0.01, max=0.99)
+            barycentric_weights = barycentric / (1e-3+barycentric.sum(dim=1, keepdim=True))
+            new_vertex_location = (self.model.vertices[clone_indices] * barycentric_weights).sum(dim=1)
+        elif split_mode == "split_point":
+            _, radius = calculate_circumcenters_torch(self.model.vertices[clone_indices])
+            split_point += (split_std * radius.reshape(-1, 1)).clip(min=1e-3, max=3) * torch.randn(*split_point.shape, device=self.model.device)
+            new_vertex_location = split_point
+            # new_vertex_location = (self.model.vertices[clone_indices] * barycentric_weights.unsqueeze(-1)).sum(dim=1)
+        elif split_mode == "split_point_c":
+            barycentric_weights = calc_barycentric(split_point, clone_vertices).clip(min=0)
+            barycentric_weights = barycentric_weights / (1e-3+barycentric_weights.sum(dim=1, keepdim=True))
+            barycentric_weights += 1e-4*torch.randn(*barycentric_weights.shape, device=self.model.device)
+            new_vertex_location = (self.model.vertices[clone_indices] * barycentric_weights.unsqueeze(-1)).sum(dim=1)
+        else:
+            raise Exception(f"Split mode: {split_mode} not supported")
+        self.add_points(new_vertex_location)
+
+    def update_triangulation(self, **kwargs):
+        return
+        new_inds = self.model.update_triangulation(**kwargs)
+        tensors = self.optim.tensor_index(
+            new_inds, ['density', 'color', 'gradient'])
+        self.model.density, self.model.rgb, self.model.gradient = tensors['density'], tensors['color'], tensors['gradient'], 
+        self.model.sh = self.sh_optim.tensor_index(new_inds, ['sh'])['sh']
 
 def bake_from_model(base_model, mask, chunk_size: int = 408_576) -> FrozenTetModel:
     """Convert an existing neural‑field `Model` into a parameter‑only

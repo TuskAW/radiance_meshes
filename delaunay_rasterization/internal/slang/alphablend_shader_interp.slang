@@ -191,9 +191,19 @@ float4 undo_pixel_state(float4 pixel_state_t_n, float4 gauss_rgba_t_n)
     return float4(color_t_nm1, log_transmittance_t_nm1);
 }
 
+[Differentiable]
+float4 update_xyzd_state(in float4 prev_xyzd, in float4 ctrl_xyzd, in float T) {
+    return prev_xyzd + T * ctrl_xyzd;
+}
+
+float4 undo_xyzd_state(in float4 next_xyzd, in float4 ctrl_xyzd, in float T) {
+    return next_xyzd - T * ctrl_xyzd;
+}
+
 struct AlphaOut: IDifferentiable {
     float4 rgba;
     DistortionState5 distortion_state;
+    float4 xyzd;
 };
 
 [Differentiable]
@@ -201,7 +211,8 @@ AlphaOut update_alpha_out(AlphaOut prev, CtrlPt ctrl) {
     float T = safe_exp(prev.rgba.a);
     return {
         update_pixel_state(prev.rgba, ctrl.rgba),
-        update_distortion_state(prev.distortion_state, T, ctrl.density, ctrl.dist)
+        update_distortion_state(prev.distortion_state, T, ctrl.density, ctrl.dist),
+        update_xyzd_state(prev.xyzd, ctrl.xyzd, T)
     };
 }
 
@@ -210,7 +221,8 @@ AlphaOut undo_alpha_out(AlphaOut curr, CtrlPt ctrl) {
     float T = safe_exp(pix_state.a);
     return {
         pix_state,
-        undo_distortion_state(curr.distortion_state, T, ctrl.density, ctrl.dist)
+        undo_distortion_state(curr.distortion_state, T, ctrl.density, ctrl.dist),
+        undo_xyzd_state(curr.xyzd, ctrl.xyzd, T)
     };
 }
 
@@ -221,6 +233,7 @@ AlphaOut alpha_blend(TensorView<int32_t> sorted_gauss_idx,
                    DiffTensorView tet_density,
                    DiffTensorView final_pixel_state,
                    DiffTensorView final_distortion_state,
+                   DiffTensorView final_xyzd_state,
                    TensorView<int32_t> n_contributors,
                    TensorView<bool> tet_alive,
                    no_diff Camera cam,
@@ -234,7 +247,7 @@ AlphaOut alpha_blend(TensorView<int32_t> sorted_gauss_idx,
     float4 curr_pixel_state = float4(0.f, 0.f, 0.f, 0.f);
     DistortionState5 curr_distortion_state = {0.f, 0.f, 0.f, 0.f, 0.f};
     AlphaOut ao = {
-        curr_pixel_state, curr_distortion_state
+        curr_pixel_state, curr_distortion_state, float4(0.f, 0.f, 0.f, 0.f)
     };
     uint32_t block_size = cam.tile_height * cam.tile_width;
     bool is_inside = (pix_coord.x < cam.W && pix_coord.y < cam.H);
@@ -273,7 +286,7 @@ AlphaOut alpha_blend(TensorView<int32_t> sorted_gauss_idx,
                 local_n_contrib++;
                 SplatTetrahedra_interp g = collected_splats[j];
                 CtrlPt tetra_ctrl;
-                if (evaluate_tetra_interp(g, ray.o, ray.d, cam.min_t, tetra_ctrl) && tetra_ctrl.rgba.a > 0) {
+                if (evaluate_tetra_interp(g, ray, cam.min_t, tetra_ctrl) && tetra_ctrl.rgba.a > 0) {
                     AlphaOut new_ao = update_alpha_out(ao, tetra_ctrl);
 
                     ao = new_ao;
@@ -300,6 +313,7 @@ void bwd_alpha_blend(TensorView<int32_t> sorted_gauss_idx,
                      DiffTensorView tet_density,
                      DiffTensorView final_pixel_state,
                      DiffTensorView final_distortion_state,
+                     DiffTensorView final_xyzd_state,
                      TensorView<int32_t> n_contributors,
                      TensorView<bool> tet_alive,
                      no_diff Camera cam,
@@ -321,6 +335,7 @@ void bwd_alpha_blend(TensorView<int32_t> sorted_gauss_idx,
 
     float4 current_pixel_state;
     DistortionState5 curr_distortion_state;
+    float4 current_xyzd_state;
     int32_t n_contrib_fwd;
     if (is_inside) {
         curr_distortion_state = {final_distortion_state[uint3(uint32_t(pix_coord.y), uint32_t(pix_coord.x), 0)],
@@ -332,9 +347,13 @@ void bwd_alpha_blend(TensorView<int32_t> sorted_gauss_idx,
                                      final_pixel_state[uint3(uint32_t(pix_coord.y), uint32_t(pix_coord.x), 1)],
                                      final_pixel_state[uint3(uint32_t(pix_coord.y), uint32_t(pix_coord.x), 2)],
                                      final_pixel_state[uint3(uint32_t(pix_coord.y), uint32_t(pix_coord.x), 3)]);
+        current_xyzd_state = float4(final_xyzd_state[uint3(uint32_t(pix_coord.y), uint32_t(pix_coord.x), 0)],
+                                     final_xyzd_state[uint3(uint32_t(pix_coord.y), uint32_t(pix_coord.x), 1)],
+                                     final_xyzd_state[uint3(uint32_t(pix_coord.y), uint32_t(pix_coord.x), 2)],
+                                     final_xyzd_state[uint3(uint32_t(pix_coord.y), uint32_t(pix_coord.x), 3)]);
         n_contrib_fwd = n_contributors[uint3(uint32_t(pix_coord.y), uint32_t(pix_coord.x), 0)];
     }
-    AlphaOut ao = {current_pixel_state, curr_distortion_state};
+    AlphaOut ao = {current_pixel_state, curr_distortion_state, current_xyzd_state};
 
     Ray ray = get_ray(cam, center_pix_coord);
 
@@ -363,13 +382,12 @@ void bwd_alpha_blend(TensorView<int32_t> sorted_gauss_idx,
                 SplatTetrahedra_interp g = collected_splats[j];
 
                 CtrlPt tetra_ctrl;
-                if (evaluate_tetra_interp(g, ray.o, ray.d, cam.min_t, tetra_ctrl) && tetra_ctrl.rgba.a > 0) {
+                if (evaluate_tetra_interp(g, ray, cam.min_t, tetra_ctrl) && tetra_ctrl.rgba.a > 0) {
                     ao = undo_alpha_out(ao, tetra_ctrl);
 
                     // Back-prop automatically through blending and gaussian evaluation.
                     DifferentialPair<SplatTetrahedra_interp> dp_g = diffPair(g);
-                    DifferentialPair<float3> dp_ray_o = diffPair(ray.o);
-                    DifferentialPair<float3> dp_ray_d = diffPair(ray.d);
+                    DifferentialPair<Ray> dp_ray = diffPair(ray);
                     DifferentialPair<CtrlPt> dp_tetra_ctrl = diffPair(tetra_ctrl);
                     DifferentialPair<AlphaOut> dp_ao = diffPair(ao);
 
@@ -383,7 +401,7 @@ void bwd_alpha_blend(TensorView<int32_t> sorted_gauss_idx,
                         grad_scale * dp_tetra_ctrl.d.dist,
                         grad_scale * dp_tetra_ctrl.d.density,
                     };
-                    bwd_diff(evaluate_tetra_interp)(dp_g, dp_ray_o, dp_ray_d, cam.min_t, d_tetra_scale);
+                    bwd_diff(evaluate_tetra_interp)(dp_g, dp_ray, cam.min_t, d_tetra_scale);
                     bwd_diff(load_tet_alphablend_interp)(g_idx, vertices, indices, tet_density, dp_g.d);
 
                 }
@@ -402,6 +420,7 @@ void splat_tiled(TensorView<int32_t> sorted_gauss_idx,
                  DiffTensorView vertices,
                  DiffTensorView tet_density,
                  DiffTensorView output_img,
+                 DiffTensorView xyzd_img,
                  DiffTensorView distortion_img,
                  TensorView<int32_t> n_contributors,
                  TensorView<bool> tet_alive,
@@ -433,6 +452,7 @@ void splat_tiled(TensorView<int32_t> sorted_gauss_idx,
         tet_density,
         output_img,
         distortion_img,
+        xyzd_img,
         n_contributors,
         tet_alive,
         cam,
@@ -447,6 +467,10 @@ void splat_tiled(TensorView<int32_t> sorted_gauss_idx,
       output_img.storeOnce(uint3(uint32_t(pix_coord.y), uint32_t(pix_coord.x), 1), pixel_states.rgba.g);
       output_img.storeOnce(uint3(uint32_t(pix_coord.y), uint32_t(pix_coord.x), 2), pixel_states.rgba.b);
       output_img.storeOnce(uint3(uint32_t(pix_coord.y), uint32_t(pix_coord.x), 3), pixel_states.rgba.a);
+      xyzd_img.storeOnce(uint3(uint32_t(pix_coord.y), uint32_t(pix_coord.x), 0), pixel_states.xyzd.x);
+      xyzd_img.storeOnce(uint3(uint32_t(pix_coord.y), uint32_t(pix_coord.x), 1), pixel_states.xyzd.y);
+      xyzd_img.storeOnce(uint3(uint32_t(pix_coord.y), uint32_t(pix_coord.x), 2), pixel_states.xyzd.z);
+      xyzd_img.storeOnce(uint3(uint32_t(pix_coord.y), uint32_t(pix_coord.x), 3), pixel_states.xyzd.a);
       distortion_img.storeOnce(uint3(uint32_t(pix_coord.y), uint32_t(pix_coord.x), 0), pixel_states.distortion_state.x);
       distortion_img.storeOnce(uint3(uint32_t(pix_coord.y), uint32_t(pix_coord.x), 1), pixel_states.distortion_state.y);
       distortion_img.storeOnce(uint3(uint32_t(pix_coord.y), uint32_t(pix_coord.x), 2), pixel_states.distortion_state.z);
@@ -520,7 +544,7 @@ VarInfo kern_calc_tet_err(TensorView<int32_t> sorted_gauss_idx,
                 SplatTetrahedra_interp g = collected_splats[j];
                 uint32_t g_idx = collected_idx[j];
                 CtrlPt tetra_ctrl;
-                if (evaluate_tetra_interp(g, ray.o, ray.d, cam.min_t, tetra_ctrl) && tetra_ctrl.rgba.a > 0) {
+                if (evaluate_tetra_interp(g, ray, cam.min_t, tetra_ctrl) && tetra_ctrl.rgba.a > 0) {
                     //if (tetra_ctrl.rgba.a < 1/255.f) continue;
                     AlphaOut new_ao = update_alpha_out(ao, tetra_ctrl);
 

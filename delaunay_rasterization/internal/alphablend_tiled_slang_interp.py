@@ -18,6 +18,9 @@ class AlphaBlendTiledRender(torch.autograd.Function):
         output_img = torch.zeros((render_grid.image_height, 
                                   render_grid.image_width, 4), 
                                  device=device)
+        xyzd_img = torch.zeros((render_grid.image_height, 
+                                  render_grid.image_width, 4), 
+                                 device=device)
         n_contributors = torch.zeros((render_grid.image_height, 
                                       render_grid.image_width, 1),
                                      dtype=torch.int32, device=device)
@@ -38,6 +41,7 @@ class AlphaBlendTiledRender(torch.autograd.Function):
             vertices=vertices,
             tet_density=tet_density,
             output_img=output_img,
+            xyzd_img=xyzd_img,
             distortion_img=distortion_img,
             n_contributors=n_contributors,
             tet_alive=tet_alive,
@@ -54,7 +58,7 @@ class AlphaBlendTiledRender(torch.autograd.Function):
         tensors = [
             sorted_tetra_idx, tile_ranges,
             indices, vertices, tet_density, 
-            output_img, distortion_img, n_contributors,
+            output_img, xyzd_img, distortion_img, n_contributors,
             ray_jitter
         ]
         non_tensor_data, tensor_data = split_tensors(tcam)
@@ -64,13 +68,13 @@ class AlphaBlendTiledRender(torch.autograd.Function):
 
         ctx.render_grid = render_grid
 
-        return output_img, distortion_img, tet_alive
+        return output_img, xyzd_img, distortion_img, tet_alive
 
     @staticmethod
-    def backward(ctx, grad_output_img, grad_distortion_img, grad_vert_alive):
+    def backward(ctx, grad_output_img, grad_xyzd_img, grad_distortion_img, grad_vert_alive):
         (sorted_tetra_idx, tile_ranges, 
          indices, vertices, tet_density,
-         output_img, distortion_img, n_contributors,
+         output_img, xyzd_img, distortion_img, n_contributors,
             ray_jitter) = ctx.saved_tensors[:ctx.len_tensors]
         tcam = recombine_tensors(ctx.non_tensor_data, ctx.saved_tensors[ctx.len_tensors:])
         render_grid = ctx.render_grid
@@ -96,6 +100,7 @@ class AlphaBlendTiledRender(torch.autograd.Function):
             tcam=tcam,
             tet_density=(tet_density, tet_density_grad),
             output_img=(output_img, grad_output_img),
+            xyzd_img=(xyzd_img, grad_xyzd_img),
             distortion_img=(distortion_img, grad_distortion_img),
             n_contributors=n_contributors,
             tet_alive=tet_alive,

@@ -73,23 +73,30 @@ class Camera(nn.Module):
         self.update()
         self.data_device = self.world_view_transform.device
 
+    @property
+    def fx(self):
+        return fov2focal(self.fovx, self.image_width)
+
+    @property
+    def fy(self):
+        return fov2focal(self.fovy, self.image_height)
+
     def update(self):
+        # world_view_transform takes world to view
         self.world_view_transform = torch.tensor(getWorld2View2(self.R, self.T, self.trans, self.scale)).transpose(0, 1).to(self.data_device)
         self.projection_matrix = getProjectionMatrix(znear=self.znear, zfar=self.zfar, fovX=self.fovx, fovY=self.fovy).transpose(0,1).to(self.data_device)
         self.full_proj_transform = (self.world_view_transform.unsqueeze(0).bmm(self.projection_matrix.unsqueeze(0))).squeeze(0)
         self.camera_center = self.world_view_transform.inverse()[3, :3]
 
     def to_dict(self, device):
-        fy = fov2focal(self.fovy, self.image_height)
-        fx = fov2focal(self.fovx, self.image_width)
         return dict(
             world_view_transform=self.world_view_transform.T.to(device),
             cam_pos=self.camera_center.to(device),
             # fx=fx,
             # fy=fy,
             K = torch.tensor([
-                [fx, 0, self.image_width/2],
-                [0, fy, self.image_height/2],
+                [self.fx, 0, self.image_width/2],
+                [0, self.fy, self.image_height/2],
                 [0, 0, 1],
             ]).to(device),
             image_height=self.image_height,

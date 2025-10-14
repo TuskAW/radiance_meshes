@@ -19,6 +19,28 @@ class CustomAdam:
         stored_state = self.optimizer.state.get(group['params'][0], None)
         return stored_state
 
+    def tensor_index(self, inds, names):
+        """
+        Replace a tensor in the optimizer with a new tensor, maintaining its state if possible.
+        """
+        optimizable_tensors = {}
+        for group in self.optimizer.param_groups:
+            if group['name'] in self.ignore_param_list:
+                continue
+            if group['name'] in names:
+                stored_state = self.optimizer.state.get(group['params'][0], None)
+                if stored_state and "exp_avg" in stored_state:
+                    stored_state["exp_avg"] = stored_state["exp_avg"][inds]
+                    stored_state["exp_avg_sq"] = stored_state["exp_avg_sq"][inds]
+
+                del self.optimizer.state[group['params'][0]]
+                group['params'][0] = nn.Parameter(group['params'][0][inds].requires_grad_(True))
+                self.optimizer.state[group['params'][0]] = stored_state
+
+                optimizable_tensors[group['name']] = group['params'][0]
+
+        return optimizable_tensors
+
     def replace_tensor_to_optimizer(self, tensor, name):
         """
         Replace a tensor in the optimizer with a new tensor, maintaining its state if possible.

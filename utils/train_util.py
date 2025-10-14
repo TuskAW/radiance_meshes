@@ -1,3 +1,4 @@
+import cv2
 import math
 import torch
 import numpy as np
@@ -48,7 +49,7 @@ def render(camera: Camera, model, cell_values=None, tile_size=16, min_t=0.1,
         else:
             vertex_color, cell_values = model.get_cell_values(camera, all_circumcenters=circumcenter)
 
-    image_rgb, distortion_img, tet_alive = Render.apply(
+    image_rgb, xyzd_img, distortion_img, tet_alive = Render.apply(
         sorted_tetra_idx,
         tile_ranges,
         model.indices,
@@ -60,12 +61,17 @@ def render(camera: Camera, model, cell_values=None, tile_size=16, min_t=0.1,
     alpha = image_rgb.permute(2,0,1)[3, ...]
     total_density = (distortion_img[:, :, 2]**2).clip(min=1e-6)
     distortion_loss = (((distortion_img[:, :, 0] - distortion_img[:, :, 1]) + distortion_img[:, :, 4]) / total_density).clip(min=0)
+
+    # unrotate the xyz part of the xyzd_img
+    rotated = xyzd_img[..., :3].reshape(-1, 3) @ camera.world_view_transform[:3, :3].to(device)
+    rxyzd_img = torch.cat([rotated.reshape(xyzd_img[..., :3].shape), xyzd_img[..., 3:]], dim=-1)
     
     render_pkg = {
         'render': image_rgb.permute(2,0,1)[:3, ...] * camera.gt_alpha_mask.to(device),
         'alpha': alpha,
         'distortion_loss': distortion_loss.mean(),
         'mask': mask,
+        'xyzd': rxyzd_img,
         **extras
     }
     return render_pkg
@@ -180,3 +186,20 @@ def render_debug(render_tensor, model, camera, density_multi=1, tile_size=16):
 
     del render_pkg, render_tensor
     return image
+
+def visualize_depth_numpy(depth, minmax=None, cmap=cv2.COLORMAP_JET):
+    """
+    depth: (H, W)
+    """
+
+    x = np.nan_to_num(depth) # change nan to 0
+    if minmax is None:
+        mi = np.min(x[x>0]) # get minimum positive depth (ignore background)
+        ma = np.max(x)
+    else:
+        mi,ma = minmax
+
+    x = (x-mi)/(ma-mi+1e-8) # normalize to 0~1
+    x = (255*x).clip(min=0, max=255).astype(np.uint8)
+    x_ = cv2.applyColorMap(x, cmap)
+    return x_, [mi,ma]
