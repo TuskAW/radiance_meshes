@@ -7,8 +7,11 @@ from pyquaternion import Quaternion
 from icecream import ic
 from jax import jacrev, grad
 import jax.numpy as jnp
-from utils.train_util import render
 from data.camera import Camera
+
+from utils.topo_utils import build_adj
+from delaunay_rasterization.internal.ray_trace import TetrahedralRayTrace
+from dtlookup import lookup_inds
 
 def get_projection_matrix(znear, zfar, fy, fx, height, width, device):
     """Calculate projection matrix for given camera parameters."""
@@ -126,8 +129,24 @@ def test_tetrahedra_rendering(vertices, indices, cell_values, tet_density, viewm
     model.get_cell_values = get_cell_values
     model.mask_values = False
 
-    render_pkg = render(camera, model, tile_size=tile_size, min_t=tmin, ladder_p=1, pre_multi=1, clip_multi=0)
-    torch_image = render_pkg['render'].permute(1, 2, 0)
+    rays = camera.to_rays().cuda()
+    cpos = camera.camera_center
+
+    tet_adj = build_adj(model.vertices, model.indices, device='cuda')
+    tet_adj = tet_adj.int()
+    # start_tet_ids = find_point_tetrahedron_sl(cpos.reshape(1, 3).cuda(), model.vertices, model.indices).int()
+    start_tet_ids = lookup_inds(model.indices, model.vertices, cpos.reshape(1, 3).cuda())
+    output_img, distortion_img = TetrahedralRayTrace.apply(
+            rays,
+            model.indices,
+            model.vertices,
+            cell_values,
+            tet_adj,
+            start_tet_ids[0].item() * torch.ones((rays.shape[0]), dtype=torch.int, device='cuda'),
+            tmin,
+            200,
+    )
+    torch_image = output_img.reshape(camera.image_height, camera.image_width, -1)
     
     vc = cell_values[:, 1:].reshape(-1, 6)
     td = cell_values[:, :1]
@@ -143,8 +162,6 @@ def test_tetrahedra_rendering(vertices, indices, cell_values, tet_density, viewm
     torch_image_np = torch_image[..., :3].cpu().detach().numpy()
     jax_dist_loss = np.asarray(jax_image[..., 4].mean())
     jax_dist_img = np.asarray(jax_image[..., 4])
-    torch_dist_loss = render_pkg['distortion_loss'].cpu().detach().numpy()
-    # torch_dist_img = render_pkg['distortion_img'].cpu().detach().numpy()
     diff = jax_image[..., :3] - torch_image_np
     mean_error = np.abs(diff).mean()
     max_error = np.abs(diff).max()
@@ -156,11 +173,8 @@ def test_tetrahedra_rendering(vertices, indices, cell_values, tet_density, viewm
         'mean_error': mean_error,
         'max_error': max_error,
         'extras': extras,
-        'torch_extras': render_pkg,
         'jax_dist_loss': jax_dist_loss,
-        'torch_dist_loss': torch_dist_loss,
         'jax_dist_img': jax_dist_img,
-        # 'torch_dist_img': torch_dist_img,
         # 'vs_tetra': vs_tetra,
         # 'circumcenter': circumcenter,
         # 'rect_tile_space': rect_tile_space,
@@ -168,10 +182,9 @@ def test_tetrahedra_rendering(vertices, indices, cell_values, tet_density, viewm
     }
 
     if check_gradients:
-        # Compute gradients through both implementations
-        torch_loss = torch_image[..., :3].sum() + render_pkg['distortion_loss'].mean()
+        torch_loss = torch_image[..., :3].sum()
         torch_loss.backward()
-        
+
         # Store PyTorch gradients
         results['torch_vertex_grad'] = vertices.grad.clone().cpu().numpy()
         # ic(cell_values.grad, tet_density.grad)
@@ -206,7 +219,6 @@ def test_tetrahedra_rendering(vertices, indices, cell_values, tet_density, viewm
         results['jax_cell_values_grad'] = np.array(jax_cell_values_grad).reshape(-1, 6)
         results['jax_tet_density_grad'] = np.array(jax_tet_density_grad)
 
-        results['dist_loss_err'] = np.abs(results['torch_dist_loss'] - results['jax_dist_loss'])
         results['vertex_err'] = np.abs(results['torch_vertex_grad'] - results['jax_vertex_grad'])
         results['cell_values_err'] = np.abs(results['torch_cell_values_grad'] - results['jax_cell_values_grad'])
         results['tet_density_err'] = np.abs(results['torch_tet_density_grad'] - results['jax_tet_density_grad'])

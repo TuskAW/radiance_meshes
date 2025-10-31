@@ -3,7 +3,7 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 from data.camera import Camera
-from delaunay_rasterization.internal.alphablend_tiled_slang_interp import AlphaBlendTiledRender as Render
+from delaunay_rasterization.internal.alphablend_tiled_slang_interp import AlphaBlendTiledRender
 from delaunay_rasterization.internal.render_grid import RenderGrid
 from delaunay_rasterization.internal.tile_shader_slang import vertex_and_tile_shader
 from delaunay_rasterization.internal.alphablend_tiled_slang import render_constant_color
@@ -48,7 +48,7 @@ def render(camera: Camera, model, cell_values=None, tile_size=16, min_t=0.1,
         else:
             vertex_color, cell_values = model.get_cell_values(camera, all_circumcenters=circumcenter)
 
-    image_rgb, distortion_img, tet_alive = Render.apply(
+    image_rgb, distortion_img, tet_alive = AlphaBlendTiledRender.apply(
         sorted_tetra_idx,
         tile_ranges,
         model.indices,

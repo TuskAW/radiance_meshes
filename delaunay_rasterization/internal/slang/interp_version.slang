@@ -61,44 +61,58 @@ inline float3 linear_color(float3 grad, float3 v)
     return {f, f, f};
 }
 
+[Differentiable]
+CtrlPt integrate_tetra_segment(
+    in SplatTetrahedra_interp g, 
+    in float3 ray_o,
+    in float3 ray_d,
+    in float enter,
+    in float exit,
+)
+{
 
+    float dt = max(exit - enter, 0.0f);
+
+    float3 v_enter = enter * ray_d + ray_o - g.tet.verts[0];
+    float3 v_exit = exit * ray_d + ray_o - g.tet.verts[0];
+    float3 c_enter = max(linear_color(g.grd, v_enter) + g.base_color, 0.f);
+    float3 c_exit = max(linear_color(g.grd, v_exit) + g.base_color, 0.f);
+
+    // float alpha = safe_clip(1.0f - safe_exp(-g.density * dt), 0.f, 1.f);
+    float alpha = max(-safe_expm1(-g.density * dt), 0.f);
+    float3 final_color = compute_integral(c_exit, c_enter, dt*g.density);
+
+    float4 rgba = {final_color.x,
+                    final_color.y,
+                    final_color.z,
+                    g.density * dt};
+    return { rgba, {enter, exit}, g.density };
+}
 [Differentiable]
 bool evaluate_tetra_interp(
     in SplatTetrahedra_interp g, 
     in float3 ray_o,
     in float3 ray_d,
     no_diff in float t_min,
-    out CtrlPt ctrl_pt)
+    out CtrlPt ctrl_pt,
+    no_diff out int exit_face)
 {
     float2 dist;
 
     float4x3 verts = float4x3(g.tet.verts[0], g.tet.verts[1], g.tet.verts[2], g.tet.verts[3]);
 
+    float3 enter_norm, exit_norm;
     bool hit = ray_tetrahedron_intersect_fused(
-        ray_o, ray_d, verts, dist);
+        ray_o, ray_d, verts, dist, enter_norm, exit_norm, exit_face);
 
     float enter = dist.x;
     float exit = max(dist.y, enter);
-    float dt = max(dist.y - enter, 0.0f);
 
-    if (!hit || dt < 1e-5f) {
+    if (!hit) {
         ctrl_pt = { (float4)(0.f, 0.f, 0.f, 0.f), {0.f, 0.f}, g.density };
         return false;
     } else {
-        float3 v_enter = enter * ray_d + ray_o - verts[0];
-        float3 v_exit = exit * ray_d + ray_o - verts[0];
-        float3 c_enter = max(linear_color(g.grd, v_enter) + g.base_color, 0.f);
-        float3 c_exit = max(linear_color(g.grd, v_exit) + g.base_color, 0.f);
-
-        // float alpha = safe_clip(1.0f - safe_exp(-g.density * dt), 0.f, 1.f);
-        float alpha = max(-safe_expm1(-g.density * dt), 0.f);
-        float3 final_color = compute_integral(c_exit, c_enter, dt*g.density);
-
-        float4 rgba = {final_color.x,
-                       final_color.y,
-                       final_color.z,
-                       g.density * dt};
-        ctrl_pt = { rgba, {enter, exit}, g.density };
+        ctrl_pt = integrate_tetra_segment(g, ray_o, ray_d, enter, exit);
         return true;
     }
 }

@@ -168,6 +168,7 @@ class FrozenTetModel(BaseModel):
         indices: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
         circumcenters: Optional[torch.Tensor] = None,
+        **kwargs
     ):
         if circumcenters is None:
             circumcenter = pre_calc_cell_values(

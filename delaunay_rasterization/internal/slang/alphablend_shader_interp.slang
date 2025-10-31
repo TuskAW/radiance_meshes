@@ -245,8 +245,8 @@ AlphaOut alpha_blend(TensorView<int32_t> sorted_gauss_idx,
     //bool print = thread_rank == 0;
     bool print = false;
 
-
     Ray ray = get_ray(cam, center_pix_coord);
+    int exit_face;
     // if (print) {
     //     printf("ray_o: %f, %f, %f, ray_d: %f, %f, %f\n", ray.o.x, ray.o.y, ray.o.z, ray.d.x, ray.d.y, ray.d.z);
     // }
@@ -273,7 +273,7 @@ AlphaOut alpha_blend(TensorView<int32_t> sorted_gauss_idx,
                 local_n_contrib++;
                 SplatTetrahedra_interp g = collected_splats[j];
                 CtrlPt tetra_ctrl;
-                if (evaluate_tetra_interp(g, ray.o, ray.d, cam.min_t, tetra_ctrl) && tetra_ctrl.rgba.a > 0) {
+                if (evaluate_tetra_interp(g, ray.o, ray.d, cam.min_t, tetra_ctrl, exit_face) && tetra_ctrl.rgba.a > 0) {
                     AlphaOut new_ao = update_alpha_out(ao, tetra_ctrl);
 
                     ao = new_ao;
@@ -337,6 +337,7 @@ void bwd_alpha_blend(TensorView<int32_t> sorted_gauss_idx,
     AlphaOut ao = {current_pixel_state, curr_distortion_state};
 
     Ray ray = get_ray(cam, center_pix_coord);
+    int exit_face;
 
     DifferentialPair<float2> dp_center_pix_coord = diffPair(center_pix_coord);
 
@@ -363,7 +364,7 @@ void bwd_alpha_blend(TensorView<int32_t> sorted_gauss_idx,
                 SplatTetrahedra_interp g = collected_splats[j];
 
                 CtrlPt tetra_ctrl;
-                if (evaluate_tetra_interp(g, ray.o, ray.d, cam.min_t, tetra_ctrl) && tetra_ctrl.rgba.a > 0) {
+                if (evaluate_tetra_interp(g, ray.o, ray.d, cam.min_t, tetra_ctrl, exit_face) && tetra_ctrl.rgba.a > 0) {
                     ao = undo_alpha_out(ao, tetra_ctrl);
 
                     // Back-prop automatically through blending and gaussian evaluation.
@@ -490,8 +491,8 @@ VarInfo kern_calc_tet_err(TensorView<int32_t> sorted_gauss_idx,
     const int shared_memory_rounds = ((tile_idx_end - tile_idx_start) + block_size - 1) / block_size;
     uint32_t thread_rank = cudaThreadIdx().y * cudaBlockDim().x + cudaThreadIdx().x;
 
-
     Ray ray = get_ray(cam, center_pix_coord);
+    int exit_face;
 
     float max_split_alpha = 0.f;
     float max_grow_alpha = 0.f;
@@ -520,7 +521,7 @@ VarInfo kern_calc_tet_err(TensorView<int32_t> sorted_gauss_idx,
                 SplatTetrahedra_interp g = collected_splats[j];
                 uint32_t g_idx = collected_idx[j];
                 CtrlPt tetra_ctrl;
-                if (evaluate_tetra_interp(g, ray.o, ray.d, cam.min_t, tetra_ctrl) && tetra_ctrl.rgba.a > 0) {
+                if (evaluate_tetra_interp(g, ray.o, ray.d, cam.min_t, tetra_ctrl, exit_face) && tetra_ctrl.rgba.a > 0) {
                     //if (tetra_ctrl.rgba.a < 1/255.f) continue;
                     AlphaOut new_ao = update_alpha_out(ao, tetra_ctrl);
 

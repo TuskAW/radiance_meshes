@@ -223,7 +223,10 @@ bool ray_triangle_intersect2(in float3 ray_origin,
 
 // Ray-tetrahedron intersection function
 [Differentiable]
-bool ray_tetrahedron_intersect(float3 orig, float3 dir, Tetrahedra g, float2 dist) {
+bool ray_tetrahedron_intersect(
+    in float3 orig, in float3 dir, in Tetrahedra g,
+    out float2 dist, out float3 norm)
+{
     float3 v0 = g.verts[0];
     float3 v1 = g.verts[1];
     float3 v2 = g.verts[2];
@@ -360,101 +363,57 @@ float2 ray_tetrahedron_intersect_2D(float2 pixelPos, float tmin, Tetrahedra g) {
     }
 }
 
+static const uint4 kTetTriangles[4] = {
+    /* 
+    *    y
+    *    ^
+    *    |
+    *    *v2    z
+    *    |     /
+    *    |    *v3
+    *    |   /
+    *    |  /
+    *    | /          v1
+    *    v0------------*--->x
+    *                 
+    */
+    // uint4(0, 2, 1, 3),
+    // uint4(1, 2, 3, 0),
+    // uint4(0, 3, 2, 1),
+    // uint4(3, 0, 1, 2),
+    uint4(1,2,3, 0),
+    uint4(0,2,3, 1),
+    uint4(0,1,3, 2),
+    uint4(0,1,2, 3),
+};
+
 [Differentiable]
 bool ray_tetrahedron_intersect_fused(
     float3 orig, float3 dir,
     float4x3 verts,
-    inout float2 t)
+    inout float2 t,
+    out float3 enter_norm,
+    out float3 exit_norm,
+    out int out_face)
 {
-    // --------------------------------------------------------------------
-    // 1. Compute plane equations for the 4 faces (outward normals)
-    //    n[i].x, n[i].y, n[i].z, and d[i]
-    // --------------------------------------------------------------------
-    static const uint3 kTetTriangles[4] = {
-        /* 
-        *    y
-        *    ^
-        *    |
-        *    *v2    z
-        *    |     /
-        *    |    *v3
-        *    |   /
-        *    |  /
-        *    | /          v1
-        *    v0------------*--->x
-        *                 
-        */
-        uint3(0, 2, 1),
-        uint3(1, 2, 3),
-        uint3(0, 3, 2),
-        uint3(3, 0, 1),
-    };
 
-
-
-    float3 v0 = verts[0];
-    float3 v1 = verts[1];
-    float3 v2 = verts[2];
-    float3 v3 = verts[3];    
-    // const float3 n0 = cross(
-    //     verts[kTetTriangles[0][2]] - verts[kTetTriangles[0][0]],
-    //     verts[kTetTriangles[0][1]] - verts[kTetTriangles[0][0]]);
-    // const float d0  = -dot(n0, verts[kTetTriangles[0][0]] - orig);
-    // const float3 n1 = cross(
-    //     verts[kTetTriangles[1][2]] - verts[kTetTriangles[1][0]],
-    //     verts[kTetTriangles[1][1]] - verts[kTetTriangles[1][0]]);
-    // const float d1  = -dot(n1, verts[kTetTriangles[1][0]] - orig);
-    // const float3 n2 = cross(
-    //     verts[kTetTriangles[2][2]] - verts[kTetTriangles[2][0]],
-    //     verts[kTetTriangles[2][1]] - verts[kTetTriangles[2][0]]);
-    // const float d2  = -dot(n2, verts[kTetTriangles[2][0]] - orig);
-    // const float3 n3 = cross(
-    //     verts[kTetTriangles[3][2]] - verts[kTetTriangles[3][0]],
-    //     verts[kTetTriangles[3][1]] - verts[kTetTriangles[3][0]]);
-    // const float d3  = -dot(n3, verts[kTetTriangles[3][0]] - orig);
-
-
-    // Face 0: (v0, v1, v2)
-    float3 n0 = cross(v1 - v0, v2 - v0);
-    if (dot(n0, v3 - v0) > 0) {
-        n0 = -n0;
-    }
-    float d0 = -dot(n0, v0-orig);
-
-    // Face 1: (v0, v1, v3)
-    float3 n1 = cross(v1 - v0, v3 - v0);
-    if (dot(n1, v2 - v0) > 0) {
-        n1 = -n1;
-    }
-    float d1 = -dot(n1, v0-orig);
-
-    // Face 2: (v0, v2, v3)
-    float3 n2 = cross(v2 - v0, v3 - v0);
-    if (dot(n2, v1 - v0) > 0) {
-        n2 = -n2;
-    }
-    float d2 = -dot(n2, v0-orig);
-
-    // Face 3: (v1, v2, v3)
-    float3 n3 = cross(v2 - v1, v3 - v1);
-    if (dot(n3, v0 - v1) > 0) {
-        n3 = -n3;
-    }
-    float d3 = -dot(n3, v1-orig);
-
-    // --------------------------------------------------------------------
-    // 2. Initialize the intersection range [t_enter, t_exit]
-    //    You might prefer (-∞, +∞), but this variant starts at [0, big].
-    // --------------------------------------------------------------------
     float t_enter = -1e30f;
+    float t_enter_d = 1;
     float t_exit  = 1e30f;
+    float t_exit_d  = 1;
     float eps     = 1e-10f;
+    enter_norm = {0.f, 0.f, 0.f};
+    exit_norm = {0.f, 0.f, 0.f};
 
-    // --------------------------------------------------------------------
-    // 3. Clip against Plane 0
-    // --------------------------------------------------------------------
-    {
-        float dist0  = d0;
+    [unroll]
+    for (int i=0; i<4; i++) {
+        float3 n0 = cross(
+            verts[kTetTriangles[i][2]] - verts[kTetTriangles[i][0]],
+            verts[kTetTriangles[i][1]] - verts[kTetTriangles[i][0]]);
+        if (dot(n0, verts[kTetTriangles[i][3]] - verts[kTetTriangles[i][0]]) > 0) {
+            n0 = -n0;
+        }
+        const float dist0  = -dot(n0, verts[kTetTriangles[i][0]] - orig);
         float denom0 = dot(n0, dir);
 
         if (fabs(denom0) < eps) {
@@ -468,115 +427,77 @@ bool ray_tetrahedron_intersect_fused(
             float tplane = -dist0 / denom0;
             if (denom0 < 0.0f) {
                 // Ray entering at this t
-                if (tplane > t_enter) {
-                    t_enter = tplane;
+                if (-dist0 * t_enter_d > t_enter * denom0) {
+                    t_enter = -dist0;
+                    t_enter_d = denom0;
+                    enter_norm = n0;
                 }
             }
             else {
                 // Ray exiting
-                if (tplane < t_exit) {
-                    t_exit = tplane;
+                if (-dist0 * t_exit_d < t_exit * denom0) {
+                    t_exit = -dist0;
+                    t_exit_d = denom0;
+                    exit_norm = n0;
+                    out_face = (i+1)%4;
                 }
             }
         }
 
     }
-
-    // --------------------------------------------------------------------
-    // 4. Clip against Plane 1
-    // --------------------------------------------------------------------
-    {
-        float dist1  = d1;
-        float denom1 = dot(n1, dir);
-
-        if (fabs(denom1) < eps) {
-            if (dist1 > 0.0f) {
-                return false;
-            }
-        }
-        else {
-            float tplane = -dist1 / denom1;
-            if (denom1 < 0.0f) {
-                if (tplane > t_enter) {
-                    t_enter = tplane;
-                }
-            }
-            else {
-                if (tplane < t_exit) {
-                    t_exit = tplane;
-                }
-            }
-        }
-
-    }
-
-    // --------------------------------------------------------------------
-    // 5. Clip against Plane 2
-    // --------------------------------------------------------------------
-    {
-        float dist2  = d2;
-        float denom2 = dot(n2, dir);
-
-        if (fabs(denom2) < eps) {
-            if (dist2 > 0.0f) {
-                return false;
-            }
-        }
-        else {
-            float tplane = -dist2 / denom2;
-            if (denom2 < 0.0f) {
-                if (tplane > t_enter) {
-                    t_enter = tplane;
-                }
-            }
-            else {
-                if (tplane < t_exit) {
-                    t_exit = tplane;
-                }
-            }
-        }
-
-    }
-
-    // --------------------------------------------------------------------
-    // 6. Clip against Plane 3
-    // --------------------------------------------------------------------
-    {
-        float dist3  = d3;
-        float denom3 = dot(n3, dir);
-
-        if (fabs(denom3) < eps) {
-            if (dist3 > 0.0f) {
-                return false;
-            }
-        }
-        else {
-            float tplane = -dist3 / denom3;
-            if (denom3 < 0.0f) {
-                if (tplane > t_enter) {
-                    t_enter = tplane;
-                }
-            }
-            else {
-                if (tplane < t_exit) {
-                    t_exit = tplane;
-                }
-            }
-        }
-
-        if (t_enter > t_exit) {
-            return false;
-        }
-    }
-
-    // --------------------------------------------------------------------
-    // 7. Final intersection range
-    //    Return the clipped segment length if it's in front of the origin
-    // --------------------------------------------------------------------
-    if (t_exit <= 0.0f) {
+    if (t_exit_d * t_enter > t_exit * t_enter_d) {
         return false;
     }
-    t_enter = max(t_enter, 0.f);
-    t = { t_enter, t_exit };
+
+    if (t_exit / t_exit_d <= 0.0f) {
+        return false;
+    }
+    t = { max(t_enter / t_enter_d, 0.f), t_exit / t_exit_d };
+    return true;
+}
+
+[Differentiable]
+bool ray_tetrahedron_intersect_exit(
+    float3 orig, float3 dir,
+    float4x3 verts,
+    in float t_enter,
+    inout float t,
+    out float3 exit_norm,
+    out int out_face)
+{
+
+    float t_exit  = 1e30f;
+    float t_exit_d  = 1;
+    float eps     = 1e-10f;
+    exit_norm = {0.f, 0.f, 0.f};
+
+    [unroll]
+    for (int i=0; i<4; i++) {
+        float3 n0 = cross(
+            verts[kTetTriangles[i][2]] - verts[kTetTriangles[i][0]],
+            verts[kTetTriangles[i][1]] - verts[kTetTriangles[i][0]]);
+        if (dot(n0, verts[kTetTriangles[i][3]] - verts[kTetTriangles[i][0]]) > 0) {
+            n0 = -n0;
+        }
+        const float dist0  = -dot(n0, verts[kTetTriangles[i][0]] - orig);
+        float denom0 = dot(n0, dir);
+
+        if (fabs(denom0) < eps) {
+            // Ray is almost parallel to plane
+        } else {
+            if (denom0 < 0.0f) {
+            } else {
+                // Ray exiting
+                if (-dist0 * t_exit_d < t_exit * denom0 && -dist0 > t_enter * denom0) {
+                    t_exit = -dist0;
+                    t_exit_d = denom0;
+                    exit_norm = n0;
+                    out_face = i;//(i+1)%4;
+                }
+            }
+        }
+
+    }
+    t = { t_exit / t_exit_d };
     return true;
 }

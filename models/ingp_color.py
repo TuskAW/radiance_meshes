@@ -21,6 +21,9 @@ import open3d as o3d
 from utils.model_util import *
 from models.base_model import BaseModel
 from utils.ingp_util import grid_scale, compute_grid_offsets
+from utils.hashgrid import HashEmbedderOptimized
+from utils import hashgrid
+import tinycudann as tcnn
 
 torch.set_float32_matmul_precision('high')
 
@@ -49,6 +52,113 @@ def pad_for_tinycudann(x: torch.Tensor, granularity: int):
         x_padded = torch.cat([x, padding], dim=0)
         
         return x_padded, padding_needed
+
+class iNGPDW(nn.Module):
+    def __init__(self, 
+                 sh_dim=0,
+                 scale_multi=0.5,
+                 log2_hashmap_size=16,
+                 base_resolution=16,
+                 per_level_scale=2,
+                 L=10,
+                 hashmap_dim=4,
+                 hidden_dim=64,
+                 g_init=1,
+                 s_init=1e-4,
+                 d_init=0.1,
+                 c_init=0.6,
+                 density_offset=-4,
+                 **kwargs):
+        super().__init__()
+        self.scale_multi = scale_multi
+        self.L = L
+        self.dim = hashmap_dim
+        self.per_level_scale = per_level_scale
+        self.base_resolution = base_resolution
+        self.density_offset = density_offset
+
+        self.config = dict(
+            per_level_scale=per_level_scale,
+            n_levels=L,
+            otype="HashGrid",
+            n_features_per_level=self.dim,
+            base_resolution=base_resolution,
+            log2_hashmap_size=log2_hashmap_size,
+        )
+        # self.encoding = tcnn.Encoding(3, self.config)
+
+        self.encoding = hashgrid.HashEmbedderOptimized(
+            [torch.zeros((3)), torch.ones((3))],
+            self.L, n_features_per_level=self.dim,
+            log2_hashmap_size=log2_hashmap_size, base_resolution=base_resolution,
+            finest_resolution=base_resolution*per_level_scale**self.L)
+
+
+        def mk_head(n):
+            network = nn.Sequential(
+                nn.Linear(self.encoding.n_output_dims, hidden_dim),
+                nn.SELU(inplace=True),
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.SELU(inplace=True),
+                nn.Linear(hidden_dim, n)
+            )
+            gain = nn.init.calculate_gain('relu')  # for example, if using ReLU activations
+            network.apply(lambda m: init_linear(m, gain))
+            return network
+
+        self.network = mk_head(1+12+sh_dim)
+
+        self.density_net   = mk_head(1)
+        self.color_net     = mk_head(3)
+        self.gradient_net  = mk_head(3)
+        self.sh_net        = mk_head(sh_dim)
+
+        last = self.network[-1]
+        with torch.no_grad():
+            last.weight[4:, :].zero_()
+            last.bias[4:].zero_()
+            for network, eps in zip(
+                [self.gradient_net, self.sh_net, self.density_net, self.color_net], 
+                [g_init, s_init, d_init, c_init]):
+                last = network[-1]
+                with torch.no_grad():
+                    nn.init.uniform_(last.weight.data, a=-eps, b=eps)
+                    # nn.init.xavier_uniform_(m.weight, gain)
+                    last.bias.zero_()
+
+
+    def _encode(self, x: torch.Tensor, cr: torch.Tensor):
+        x = x.detach()
+        output = self.encoding(x)
+        output = output.reshape(-1, self.dim, self.L)
+        cr = cr.detach() * self.scale_multi
+        n = torch.arange(self.L, device=x.device).reshape(1, 1, -1)
+        erf_x = safe_div(torch.tensor(1.0, device=x.device),
+                         safe_sqrt(self.per_level_scale * 4*n*cr.reshape(-1, 1, 1)))
+        scaling = torch.erf(erf_x)
+        output = output * scaling
+        return output
+
+
+    def forward(self, x, cr):
+        output = self._encode(x, cr)
+
+        h = output.reshape(-1, self.L * self.dim).float()
+
+        sigma = self.density_net(h)
+        rgb = self.color_net(h)
+        # density_color_output = self.density_color_net(h)
+        # sigma = density_color_output[:, :1]
+        # rgb = density_color_output[:, 1:]
+        field_samples = self.gradient_net(h)
+        sh  = self.sh_net(h).half()
+
+        rgb = rgb.reshape(-1, 3, 1) + 0.5
+        density = safe_exp(sigma+self.density_offset)
+        grd = torch.tanh(field_samples.reshape(-1, 1, 3)) / math.sqrt(3)
+        # grd = field_samples.reshape(-1, 1, 3)
+        # grd = rgb * torch.tanh(field_samples.reshape(-1, 3, 3))  # shape (T, 3, 3)
+        return density, rgb.reshape(-1, 3), grd, sh
 
 class Model(BaseModel):
     def __init__(self,
@@ -231,13 +341,14 @@ class Model(BaseModel):
 
     @staticmethod
     def load_ckpt(path: Path, device):
-        ckpt_path = path / "ckpt_prefreeze.pth"
+        ckpt_path = path / "ckpt.pth"
         config_path = path / "config.json"
         config = Args.load_from_json(str(config_path))
         ckpt = torch.load(ckpt_path)
         print(ckpt.keys())
         vertices = ckpt['contracted_vertices']
         indices = ckpt["indices"]  # shape (N,4)
+        empty_indices = ckpt["empty_indices"]  # shape (N,4)
         del ckpt["indices"]
         print(f"Loaded {vertices.shape[0]} vertices")
         ext_vertices = ckpt['ext_vertices']
@@ -245,6 +356,7 @@ class Model(BaseModel):
         model.load_state_dict(ckpt)
         model.min_t = model.scene_scaling * config.base_min_t
         model.indices = torch.as_tensor(indices).cuda()
+        model.empty_indices = torch.as_tensor(empty_indices).cuda()
         return model
 
     def calc_tet_density(self):
@@ -316,16 +428,18 @@ class Model(BaseModel):
             indices[reverse_mask] = indices[reverse_mask][:, [1, 0, 2, 3]]
 
         # Cull tets with low density
-        self.full_indices = indices.clone()
+        # self.full_indices = indices.clone()
         self.indices = indices
         if density_threshold > 0 or alpha_threshold > 0:
             tet_density = self.calc_tet_density()
             tet_alpha = self.calc_tet_alpha(mode="min", density=tet_density)
             mask = (tet_density > density_threshold) | (tet_alpha > alpha_threshold)
             self.indices = self.indices[mask]
+            self.empty_indices = self.empty_indices[~mask]
             self.mask = mask
         else:
-            self.mask = torch.ones((self.full_indices.shape[0]), dtype=bool, device='cuda')
+            self.empty_indices = torch.empty((0, 4), dtype=self.indices.dtype, device='cuda')
+            # self.mask = torch.ones((self.full_indices.shape[0]), dtype=bool, device='cuda')
             
         torch.cuda.empty_cache()
 

@@ -143,7 +143,7 @@ args.contrib_threshold = 0.0
 args.threshold_start = 4500
 
 args.ablate_gradient = False
-args.ablate_circumsphere = False
+args.ablate_circumsphere = True
 args.voxel_size = 0.01
 
 args.use_bilateral_grid = False
@@ -492,4 +492,5 @@ mediapy.write_video(args.output_path / "rotating.mp4", eimages)
 model.save2ply(args.output_path / "ckpt.ply")
 sd = model.state_dict()
 sd['indices'] = model.indices
+sd['empty_indices'] = model.empty_indices
 torch.save(sd, args.output_path / "ckpt.pth")
