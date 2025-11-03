@@ -138,3 +138,39 @@ class TetrahedralRayTrace(torch.autograd.Function):
                 None, 
                 None, 
                 None)
+
+def get_degenerate_tet_mask(verts):
+    """
+    Computes a mask of degenerate tetrahedra.
+
+    A tet is marked as degenerate (True) if its signed volume
+    is near-zero (i.e., it's a "sliver").
+
+    Args:
+        verts (torch.Tensor): Tensor of shape (T, 4, 3) holding the
+                              vertices (A, B, C, D) for T tetrahedra.
+                              Should be dtype torch.float64.
+
+    Returns:
+        torch.Tensor: A boolean mask of shape (T,) where 'True'
+                      indicates a degenerate tet that should be
+                      filtered out.
+    """
+    A, B, C, D = verts[:, 0], verts[:, 1], verts[:, 2], verts[:, 3]
+
+    # Compute vectors from A to other vertices
+    a = B - A
+    b = C - A
+    c = D - A
+
+    # Compute cross product
+    cross_bc = torch.cross(b, c, dim=1)  # (T, 3)
+
+    # Compute denominator (6x the signed volume)
+    # 2.0 * dot(a, cross_bc)
+    denominator = 2.0 * torch.sum(a * cross_bc, dim=1)  # (T,)
+
+    # The mask is True where the volume is effectively zero.
+    mask_degenerate = torch.abs(denominator) < 1e-10
+
+    return mask_degenerate

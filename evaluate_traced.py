@@ -15,8 +15,9 @@ import time
 
 from utils.model_util import *
 from utils.topo_utils import build_adj
-from delaunay_rasterization.internal.ray_trace import TetrahedralRayTrace
+from delaunay_rasterization.internal.ray_trace import TetrahedralRayTrace, get_degenerate_tet_mask
 from dtlookup import lookup_inds, TetrahedraLookup, TetWalkLookup
+from utils.train_util import render
 
 args = Args()
 args.tile_size = 4
@@ -54,51 +55,60 @@ if args.render_train:
 else:
     splits = zip(['test'], [test_cameras])
 
+ic(model.empty_indices.shape)
 indices = torch.cat([model.indices, model.empty_indices], dim=0)
 vertices = model.vertices
 circumcenters, normalized, density, rgb, grd, sh = model.compute_batch_features(
-    vertices, indices, start=0, end=indices.shape[0])
+    vertices, model.indices, start=0, end=model.indices.shape[0])
 
 tet_adj = build_adj(model.vertices, indices, device='cuda')
 tet_adj = tet_adj.int()
+# lookup = TetWalkLookup(indices.cpu().numpy(), model.vertices.detach().cpu().numpy())
+lookup = TetrahedraLookup(indices, vertices, 256)
 
-def render(camera, model, camera_directions, cell_values, tet_adj, min_t, lookup_tool):
+def render_rt(camera, model, camera_directions, cell_values, tet_adj, min_t, lookup_tool):
     rays = camera.get_world_space_rays(camera_directions, 'cuda')
+    # rays = camera.to_rays().cuda()
     cpos = camera.camera_center
     # start_tet_ids = lookup_inds(indices, model.vertices, cpos.reshape(1, 3).cuda())
-    start_tet_ids = lookup_tool.lookup(cpos.reshape(1, 3).numpy())
+    # start_tet_ids = lookup_tool.lookup(cpos.reshape(1, 3).numpy())
+    start_tet_ids = lookup_tool.lookup(cpos.reshape(1, 3).cuda())
+    cell_values_w_empty = torch.cat([
+        cell_values,
+        torch.zeros((model.empty_indices.shape[0], cell_values.shape[1]), device='cuda')
+    ])
+    ic(cell_values_w_empty.shape, model.empty_indices.shape, model.indices.shape, cell_values.shape)
     # print(start_tet_ids)
     output_img, distortion_img = TetrahedralRayTrace.apply(
             rays,
-            model.indices,
+            indices,
             model.vertices,
-            cell_values,
+            cell_values_w_empty,
             tet_adj,
             start_tet_ids * torch.ones((rays.shape[0]), dtype=torch.int, device='cuda'),
             min_t,
             200,
     )
-    return output_img#[:, :3].reshape(camera.image_height, camera.image_width, 3)
+    return output_img[:, :3].reshape(camera.image_height, camera.image_width, 3)
 
 for split, cameras in splits:
-    # lookup = TetrahedraLookup(model.indices, model.vertices, 256)
-    lookup = TetWalkLookup(indices.cpu().numpy(), model.vertices.detach().cpu().numpy())
     cds = cameras[0].get_camera_space_directions('cuda')
     for idx, camera in enumerate(tqdm(cameras, desc=f"Rendering {split} set")):
         with torch.no_grad():
             dvrgbs = activate_output(camera.camera_center.to(model.device),
                         density, rgb, grd,
                         sh.reshape(-1, (model.max_sh_deg+1)**2 - 1, 3),
-                        indices,
+                        model.indices,
                         circumcenters,
                         vertices, model.max_sh_deg, model.max_sh_deg)
-            render_pkg = render(camera, model, cds, tet_adj=tet_adj, min_t=args.min_t, cell_values=dvrgbs, lookup_tool=lookup)
-            imageio.imwrite('test.png', (render_pkg.detach().cpu().numpy()*255).astype(np.uint8))
+            render_pkg = render_rt(camera, model, cds, tet_adj=tet_adj, min_t=args.min_t, cell_values=dvrgbs, lookup_tool=lookup)
+            # render_pkg = render(camera, model, tile_size=args.tile_size, min_t=args.min_t, cell_values=dvrgbs)['render'][:3].permute(1, 2, 0)
+            imageio.imwrite(f'test/{idx:03d}.png', (render_pkg.detach().cpu().numpy()*255).astype(np.uint8))
 
     dvrgbs = activate_output(camera.camera_center.to(model.device),
                 density, rgb, grd,
                 sh.reshape(-1, (model.max_sh_deg+1)**2 - 1, 3),
-                indices,
+                model.indices,
                 circumcenters,
                 vertices, model.max_sh_deg, model.max_sh_deg)
     for idx, camera in enumerate(tqdm(cameras, desc=f"Rendering {split} set")):
@@ -116,7 +126,27 @@ for split, cameras in splits:
 
             camera.gt_alpha_mask = torch.ones((1, camera.image_height, camera.image_width), device=camera.data_device)
             start_time = time.time()
-            render_pkg = render(camera, model, cds, tet_adj=tet_adj, min_t=args.min_t, cell_values=dvrgbs, lookup_tool=lookup)
+            render_pkg = render_rt(camera, model, cds, tet_adj=tet_adj, min_t=args.min_t, cell_values=dvrgbs, lookup_tool=lookup)
+            # render_pkg = render(camera, model, tile_size=args.tile_size, min_t=args.min_t, cell_values=dvrgbs)
             dt = time.time() - start_time
             times.append(dt)
     print("Average FPS:", 1/np.mean(times))
+
+with torch.no_grad():
+    epath = cam_util.generate_cam_path(train_cameras, 400)
+    eimages = []
+    for camera in tqdm(epath):
+        dvrgbs = activate_output(camera.camera_center.to(model.device),
+                    density, rgb, grd,
+                    sh.reshape(-1, (model.max_sh_deg+1)**2 - 1, 3),
+                    model.indices,
+                    circumcenters,
+                    vertices, model.max_sh_deg, model.max_sh_deg)
+        render_pkg = render_rt(camera, model, cds, tet_adj=tet_adj, min_t=args.min_t, cell_values=dvrgbs, lookup_tool=lookup)
+        image = render_pkg
+        # image = render_pkg['render']
+        # image = image.permute(1, 2, 0)
+        image = image.detach().cpu().numpy()
+        eimages.append(image)
+
+mediapy.write_video(args.output_path / "rotating_rt.mp4", eimages)

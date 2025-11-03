@@ -273,7 +273,7 @@ AlphaOut alpha_blend(TensorView<int32_t> sorted_gauss_idx,
                 local_n_contrib++;
                 SplatTetrahedra_interp g = collected_splats[j];
                 CtrlPt tetra_ctrl;
-                if (evaluate_tetra_interp(g, ray.o, ray.d, cam.min_t, tetra_ctrl, exit_face) && tetra_ctrl.rgba.a > 0) {
+                if (evaluate_tetra_interp(g, ray.o, ray.d, cam.min_t, tetra_ctrl) && tetra_ctrl.rgba.a > 0) {
                     AlphaOut new_ao = update_alpha_out(ao, tetra_ctrl);
 
                     ao = new_ao;
@@ -364,7 +364,7 @@ void bwd_alpha_blend(TensorView<int32_t> sorted_gauss_idx,
                 SplatTetrahedra_interp g = collected_splats[j];
 
                 CtrlPt tetra_ctrl;
-                if (evaluate_tetra_interp(g, ray.o, ray.d, cam.min_t, tetra_ctrl, exit_face) && tetra_ctrl.rgba.a > 0) {
+                if (evaluate_tetra_interp(g, ray.o, ray.d, cam.min_t, tetra_ctrl) && tetra_ctrl.rgba.a > 0) {
                     ao = undo_alpha_out(ao, tetra_ctrl);
 
                     // Back-prop automatically through blending and gaussian evaluation.
@@ -521,7 +521,7 @@ VarInfo kern_calc_tet_err(TensorView<int32_t> sorted_gauss_idx,
                 SplatTetrahedra_interp g = collected_splats[j];
                 uint32_t g_idx = collected_idx[j];
                 CtrlPt tetra_ctrl;
-                if (evaluate_tetra_interp(g, ray.o, ray.d, cam.min_t, tetra_ctrl, exit_face) && tetra_ctrl.rgba.a > 0) {
+                if (evaluate_tetra_interp(g, ray.o, ray.d, cam.min_t, tetra_ctrl) && tetra_ctrl.rgba.a > 0) {
                     //if (tetra_ctrl.rgba.a < 1/255.f) continue;
                     AlphaOut new_ao = update_alpha_out(ao, tetra_ctrl);
 

@@ -129,30 +129,30 @@ AlphaOut undo_alpha_out(AlphaOut curr, CtrlPt ctrl) {
 
 [BackwardDerivative(bwd_alpha_blend)] // Use a custom derivative so that we can hand-write the structure of the reverse loop
 AlphaOut alpha_blend(
-                   DiffTensorView rays,
-                   TensorView<int32_t> indices,
-                   DiffTensorView vertices,
-                   DiffTensorView tet_density,
-                   DiffTensorView final_pixel_state,
-                   DiffTensorView final_distortion_state,
-                   TensorView<int32_t> n_contributors,
-                   TensorView<int32_t> tet_adjacency,
-                   TensorView<int32_t> start_tet_ids,
-                   TensorView<int32_t> ray_path_buffer,
-                   no_diff float min_t,
-                   int ray_index,
-                int max_ray_steps)
+    DiffTensorView rays,
+    TensorView<int32_t> indices,
+    DiffTensorView vertices,
+    DiffTensorView tet_density,
+    DiffTensorView final_pixel_state,
+    DiffTensorView final_distortion_state,
+    TensorView<int32_t> n_contributors,
+    TensorView<int32_t> tet_adjacency,
+    TensorView<int32_t> start_tet_ids,
+    TensorView<int32_t> ray_path_buffer,
+    no_diff float min_t,
+    int ray_index,
+    int max_ray_steps)
 {
     float4 curr_pixel_state = float4(0.f, 0.f, 0.f, 0.f);
     DistortionState5 curr_distortion_state = { 0.f, 0.f, 0.f, 0.f, 0.f };
     AlphaOut ao = { curr_pixel_state, curr_distortion_state };
     int step_count = 0;
-    
+
     Ray ray = {
-        {rays[uint2(ray_index, 0)], rays[uint2(ray_index, 1)], rays[uint2(ray_index, 2)]},
-        {rays[uint2(ray_index, 3)], rays[uint2(ray_index, 4)], rays[uint2(ray_index, 5)]}
+        { rays[uint2(ray_index, 0)], rays[uint2(ray_index, 1)], rays[uint2(ray_index, 2)] },
+        { rays[uint2(ray_index, 3)], rays[uint2(ray_index, 4)], rays[uint2(ray_index, 5)] }
     };
-    
+
     // Get the pixel's starting tet index
     int current_tet_idx = start_tet_ids[ray_index];
     float t_enter = min_t;
@@ -160,56 +160,110 @@ AlphaOut alpha_blend(
     int3 last_face;
     float3 enter_norm;
     float3 exit_norm;
-    int out_face;
+    int out_face = -1;  // Initialize to -1
+    int prev_face = -1; // Initialize to -1 (for the first tet's 'in_face')
+    SplatTetrahedra_interp next_g;
 
-    for (int step = 0; step < max_ray_steps; ++step)
+    // Pre-load the first tetrahedron
+    if (current_tet_idx < 0) {
+        n_contributors[uint2(ray_index, 0)] = 0;
+        return ao;
+    }
+    SplatTetrahedra_interp g = load_tet_alphablend_interp(
+        current_tet_idx, vertices, indices, tet_density);
+    int step = 0;
+    for (; step < max_ray_steps; ++step)
     {
-        if (current_tet_idx < 0) // Hit boundary (adj index is -1)
-            break;
-            
+        // current_tet_idx is guaranteed to be >= 0 here
+
         // --- Record the path for the backward pass ---
         // ray_path_buffer[uint2(ray_index, step)] = current_tet_idx;
 
-        // Load this tet's data
-        SplatTetrahedra_interp g = load_tet_alphablend_interp(
-            current_tet_idx, vertices, indices, tet_density);
-
-
-        ray_tetrahedron_intersect_exit(
+        ray_tetrahedron_intersect_exit_plucker(
             ray.o, ray.d,
             { g.tet.verts[0], g.tet.verts[1], g.tet.verts[2], g.tet.verts[3] },
             t_enter,
-            t_exit,
+            t_exit, // This is the OUT parameter for exit t
             exit_norm,
-            out_face);
+            prev_face, // This is the IN parameter for the face we entered from
+            out_face); // This is the OUT parameter for the face we exit from
 
+        // if (ray_index == 3) {
+        //     printf("(%i, %i)Cyrus: %f-%f, %i\n", current_tet_idx, step, t_enter, t_exit, out_face);
+        // }
 
-        // Find intersection and exit face
         CtrlPt tetra_ctrl = integrate_tetra_segment(
             g,
             ray.o,
             ray.d,
             t_enter,
             t_exit);
-        // Update pixel state (same as before)
+
         ao = update_alpha_out(ao, tetra_ctrl);
-        // if (ray_index == 3) {
-        //     printf("%f - %f, %i: (%f, %f, %f)\n", t_enter, t_enter+t_exit, current_tet_idx, g.base_color.x, g.base_color.y, g.base_color.z);
-        // }
+        t_enter = t_exit; // The exit t becomes the entry t for the next step
 
-        // Update t_entry for the next step
-        t_enter = t_exit + 1e-8;
+        // ---===[ NEW ]===---
+        // Check for boundary *immediately* after intersection
+        if (out_face < 0) { // Hit boundary (adj index is -1)
+            // printf("Ray %i hit boundary, exiting from face %i of tet %i\n",
+            //        ray_index, out_face, current_tet_idx);
+            break;
+        }
 
-        // Walk to the next tet using the adjacency map
-        current_tet_idx = tet_adjacency[uint2(current_tet_idx, out_face)];
-        // printf("%f - %f (%i: %i)\n", t_enter, t_exit, out_face, current_tet_idx);
+        int next_tet_idx = tet_adjacency[uint2(current_tet_idx, out_face)];
 
-        if (ao.rgba.a < -5.5) {
+        // Check if the next tet is also a boundary
+        if (next_tet_idx < 0) {
+            current_tet_idx = -1; // Set this to break out of the loop on the next iteration
+            break;
+        }
+
+        // Load the next tet's data
+        next_g = load_tet_alphablend_interp(next_tet_idx, vertices, indices, tet_density);
+
+        // Find the vertex indices of the face we are exiting from (in 'g')
+        uint4 out_face_v = kTetTriangles[out_face];
+        uint3 out_face_i = {
+            g.vtet[out_face_v.x],
+            g.vtet[out_face_v.y],
+            g.vtet[out_face_v.z]
+        };
+
+        // ---===[ NEW: Completed 'if' condition ]===---
+        // Find the corresponding entry face in 'next_g'
+        prev_face = -1; // Default to -1 (not found)
+        for (int i = 0; i < 4; i++) {
+            // Get the vertex indices for face 'i' of 'next_g'
+            uint4 next_face_v = kTetTriangles[i];
+            uint3 next_face_i = {
+                next_g.vtet[next_face_v.x],
+                next_g.vtet[next_face_v.y],
+                next_g.vtet[next_face_v.z]
+            };
+
+            // Check if all 3 vertices from out_face_i are in next_face_i
+            // This is a permutation-invariant check
+            bool match_x = (next_face_i.x == out_face_i.x) || (next_face_i.y == out_face_i.x) || (next_face_i.z == out_face_i.x);
+            bool match_y = (next_face_i.x == out_face_i.y) || (next_face_i.y == out_face_i.y) || (next_face_i.z == out_face_i.y);
+            bool match_z = (next_face_i.x == out_face_i.z) || (next_face_i.y == out_face_i.z) || (next_face_i.z == out_face_i.z);
+
+            if (match_x && match_y && match_z) {
+                prev_face = i; // This is the 'in_face' for the next iteration
+                break;
+            }
+        }
+        // If prev_face is still -1, there's a mesh topology/adjacency error
+
+        // Advance to the next tet
+        current_tet_idx = next_tet_idx;
+        g = next_g; // The pre-fetched tet becomes the current tet
+
+        if (ao.rgba.a < -5.5) { // Early exit if opaque
             break;
         }
     }
-    
-    n_contributors[uint2(ray_index, 0)] = step_count;
+
+    n_contributors[uint2(ray_index, 0)] = step;
     return ao;
 }
 
@@ -281,7 +335,7 @@ void bwd_alpha_blend(
 
             // Re-evaluate to get the intermediate state
             CtrlPt tetra_ctrl;
-            if (evaluate_tetra_interp(g, ray.o, ray.d, min_t, tetra_ctrl, exit_face) && tetra_ctrl.rgba.a > 0) 
+            if (evaluate_tetra_interp(g, ray.o, ray.d, min_t, tetra_ctrl) && tetra_ctrl.rgba.a > 0) 
             {
                 // Undo state
                 ao = undo_alpha_out(ao, tetra_ctrl);

@@ -4,6 +4,7 @@ import safe_math;
 
 struct SplatTetrahedra_interp : IDifferentiable
 {
+    uint4 vtet;
     Tetrahedra tet;
     float3 base_color;
     float3 grd;
@@ -70,7 +71,6 @@ CtrlPt integrate_tetra_segment(
     in float exit,
 )
 {
-
     float dt = max(exit - enter, 0.0f);
 
     float3 v_enter = enter * ray_d + ray_o - g.tet.verts[0];
@@ -94,8 +94,7 @@ bool evaluate_tetra_interp(
     in float3 ray_o,
     in float3 ray_d,
     no_diff in float t_min,
-    out CtrlPt ctrl_pt,
-    no_diff out int exit_face)
+    out CtrlPt ctrl_pt)
 {
     float2 dist;
 
@@ -103,7 +102,8 @@ bool evaluate_tetra_interp(
 
     float3 enter_norm, exit_norm;
     bool hit = ray_tetrahedron_intersect_fused(
-        ray_o, ray_d, verts, dist, enter_norm, exit_norm, exit_face);
+    // bool hit = ray_tetrahedron_intersect_plucker(
+        ray_o, ray_d, verts, dist, enter_norm, exit_norm);
 
     float enter = dist.x;
     float exit = max(dist.y, enter);
@@ -140,7 +140,7 @@ SplatTetrahedra_interp load_tet_alphablend_interp(
     };
 
     SplatTetrahedra_interp result = {
-        tet, base_color, grd, density
+        virtual_tet, tet, base_color, grd, density
     };
     return result;
 }
@@ -156,6 +156,7 @@ SplatTetrahedra_interp load_tet_alphablend_interp(
 
     float density = max(float(tet_density[g_idx, 0]), 0.f);
     SplatTetrahedra_interp result;
+    result.vtet = virtual_tet;
     result.tet       = tet;
     result.density   = density;
     result.base_color = {

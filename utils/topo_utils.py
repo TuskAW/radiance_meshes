@@ -399,14 +399,16 @@ def build_adj(verts, tets, device=None):
     if device is None: device = verts.device
     T = tets.shape[0]
 
-    # ---- all faces -------------------------------------------------
     face_lists = torch.stack([
-        tets[:, (1,2,3)], # Face 0 (opposite vertex 0)
-        tets[:, (0,2,3)], # Face 1 (opposite vertex 1)
-        tets[:, (0,1,3)], # Face 2 (opposite vertex 2)
-        tets[:, (0,1,2)], # Face 3 (opposite vertex 3)
+        tets[:, (0, 2, 1)], 
+        tets[:, (1, 2, 3)], 
+        tets[:, (0, 3, 2)], 
+        tets[:, (3, 0, 1)], 
+        # tets[:, (1, 2, 3)], 
+        # tets[:, (0, 3, 2)], 
+        # tets[:, (0, 1, 3)], 
+        # tets[:, (0, 2, 1)], 
     ], dim=1).reshape(-1, 3)                         # (4T,3)
-
     face_sorted, _ = face_lists.sort(dim=1)          # canonical key
     
     # owner_tet[i] = tet index for global face i

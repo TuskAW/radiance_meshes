@@ -92,6 +92,7 @@ class TetWalkLookup:
 
         # Iterate over all grid cells and find a tet for each
         # We start the search from the previously found tet for speed
+        print("Building grid")
         last_found_tet = 0
         for i in range(grid_res):
             for j in range(grid_res):

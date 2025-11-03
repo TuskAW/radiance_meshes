@@ -350,6 +350,7 @@ class Model(BaseModel):
         indices = ckpt["indices"]  # shape (N,4)
         empty_indices = ckpt["empty_indices"]  # shape (N,4)
         del ckpt["indices"]
+        del ckpt["empty_indices"]
         print(f"Loaded {vertices.shape[0]} vertices")
         ext_vertices = ckpt['ext_vertices']
         model = Model(vertices.to(device), ext_vertices, ckpt['center'], ckpt['scene_scaling'], **config.as_dict())
@@ -434,8 +435,8 @@ class Model(BaseModel):
             tet_density = self.calc_tet_density()
             tet_alpha = self.calc_tet_alpha(mode="min", density=tet_density)
             mask = (tet_density > density_threshold) | (tet_alpha > alpha_threshold)
+            self.empty_indices = self.indices[~mask]
             self.indices = self.indices[mask]
-            self.empty_indices = self.empty_indices[~mask]
             self.mask = mask
         else:
             self.empty_indices = torch.empty((0, 4), dtype=self.indices.dtype, device='cuda')

@@ -274,7 +274,7 @@ class Camera(nn.Module):
 
         # --- Step 1: Transform to World Space ---
         # (H*W, 3) @ (3, 3) -> (H*W, 3)
-        ray_d_world = cam_space_dirs @ R_world
+        ray_d_world = cam_space_dirs @ R_world.T
         
         # Ray origins are the camera center, repeated
         # (H*W, 3)
