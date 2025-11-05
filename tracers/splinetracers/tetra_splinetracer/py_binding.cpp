@@ -27,7 +27,7 @@ using namespace pybind11::literals; // to bring in the `_a` literal
 #define CHECK_FLOAT(x)                                                         \
   TORCH_CHECK(x.dtype() == torch::kFloat32, #x " must have float32 type")
 #define CHECK_INT(x)                                                         \
-  TORCH_CHECK(x.dtype() == torch::kInt32, #x " must have float32 type")
+  TORCH_CHECK(x.dtype() == torch::kInt32, #x " must have int32 type")
 #define CHECK_INPUT(x)                                                         \
   CHECK_CUDA(x);                                                               \
   CHECK_CONTIGUOUS(x)
@@ -105,7 +105,6 @@ public:
     TORCH_CHECK(side_index.size(1) == 2,
                 "Side index must have shape (N, 2)")
     CHECK_INT(side_index);
-    CHECK_INT(face_indices);
     CHECK_CONTIGUOUS(side_index);
     CHECK_CONTIGUOUS(face_indices);
     CHECK_CONTIGUOUS(densities);
@@ -122,6 +121,11 @@ public:
     model.num_indices = face_indices.size(0);
     model.num_faces = numFaces;
     model.num_prims = numPrimitives;
+  }
+  void set_features(const torch::Tensor &colors) {
+    TORCH_CHECK(colors.size(0) == model.num_prims,
+                "All inputs (colors) must have the same 0 dimension");
+    model.features = reinterpret_cast<float *>(colors.data_ptr());
   }
 };
 
@@ -194,6 +198,9 @@ public:
         forward(context.context, device.index(), model.model, enable_backward),
         num_prims(model.model.num_prims),
         sh_degree(sqrt(model.model.feature_size) - 1) {}
+  void update_model(const tsPyPrimitives &model) {
+    forward.reset_features(model.model);
+  }
   py::dict trace_rays(const tsPyGAS &gas, const torch::Tensor &ray_origins,
                       const torch::Tensor &ray_directions, float tmin,
                       float tmax, const size_t max_iters,
@@ -237,7 +244,8 @@ PYBIND11_MODULE(tetra_splinetracer_cpp_extension, m) {
       .def_property_readonly("faces", &tsSavedForBackward::get_faces);
   py::class_<tsPyPrimitives>(m, "Primitives")
       .def(py::init<const torch::Device &>())
-      .def("add_primitives", &tsPyPrimitives::add_primitives);
+      .def("add_primitives", &tsPyPrimitives::add_primitives)
+      .def("set_features", &tsPyPrimitives::set_features);
   py::class_<tsPyGAS>(m, "GAS").def(
       py::init<const tsOptixContext &, const torch::Device &,
                const tsPyPrimitives &, const bool, const bool, const bool>());
@@ -245,5 +253,6 @@ PYBIND11_MODULE(tetra_splinetracer_cpp_extension, m) {
   py::class_<tsPyForward>(m, "Forward")
       .def(py::init<const tsOptixContext &, const torch::Device &,
                     const tsPyPrimitives &, const bool>())
-      .def("trace_rays", &tsPyForward::trace_rays);
+      .def("trace_rays", &tsPyForward::trace_rays)
+      .def("update_model", &tsPyForward::update_model);
 }

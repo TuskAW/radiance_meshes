@@ -77,7 +77,7 @@ def render_rt(camera, model, camera_directions, cell_values, tet_adj, min_t, loo
         cell_values,
         torch.zeros((model.empty_indices.shape[0], cell_values.shape[1]), device='cuda')
     ])
-    ic(cell_values_w_empty.shape, model.empty_indices.shape, model.indices.shape, cell_values.shape)
+    # ic(cell_values_w_empty.shape, model.empty_indices.shape, model.indices.shape, cell_values.shape)
     # print(start_tet_ids)
     output_img, distortion_img = TetrahedralRayTrace.apply(
             rays,

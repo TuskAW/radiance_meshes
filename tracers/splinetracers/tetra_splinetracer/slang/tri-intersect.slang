@@ -141,7 +141,7 @@ float ray_intersect_plane(float3 ray_origin,
 
 [Differentiable]
 ControlPoint intersect(
-    float3 rayo, float3 rayd, float3x3 verts, float3 color, float density
+    float3 rayo, float3 rayd, float3x3 verts, float3 base_color, float3 grd, float density
 ) {
     float3 tri_a = verts[0];
     float3 tri_b = verts[1];
@@ -152,7 +152,7 @@ ControlPoint intersect(
     
     float t = ray_intersect_plane(rayo, rayd, normal, tri_a);
     ControlPoint out = {
-        t, density, density*color.x, density*color.y, density*color.z 
+        t, density, base_color, grd
     };
     return out;
 }

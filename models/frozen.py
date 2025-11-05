@@ -108,7 +108,11 @@ class FrozenTetModel(BaseModel):
         int_vertices = ckpt['interior_vertices']
         ext_vertices = ckpt['ext_vertices']
         indices = ckpt['indices']
-        empty_indices = ckpt['empty_indices']
+        if 'empty_indices' in ckpt:
+            empty_indices = ckpt['empty_indices']
+            del ckpt['empty_indices']
+        else:
+            empty_indices = torch.empty((0, 4), dtype=indices.dtype, device=indices.device)
 
         density = ckpt['density']
         rgb = ckpt['rgb']
@@ -136,7 +140,6 @@ class FrozenTetModel(BaseModel):
             chunk_size=config.chunk_size if hasattr(config, 'chunk_size') else 408_576,
         )
 
-        del ckpt['empty_indices']
         
         # Load state dict to ensure all parameters are properly loaded
         model.load_state_dict(ckpt)

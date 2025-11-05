@@ -64,7 +64,9 @@ void GAS::build(const Primitives &model) {
     // }
     // uint32_t triangle_input_flags[1];
     uint32_t triangle_input_flags[1];
-    triangle_input_flags[0] = OPTIX_GEOMETRY_FLAG_NONE;
+    // triangle_input_flags[0] = OPTIX_GEOMETRY_FLAG_NONE;
+    triangle_input_flags[0] = OPTIX_GEOMETRY_FLAG_NONE;// OPTIX_INSTANCE_FLAG_DISABLE_TRIANGLE_FACE_CULLING;
+    // triangle_input_flags[1] = OPTIX_INSTANCE_FLAG_ENFORCE_ANYHIT;
     // triangle_input_flags[0] = OPTIX_GEOMETRY_FLAG_DISABLE_ANYHIT;
     OptixBuildInput triangle_input = {};
     triangle_input.type                        = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;

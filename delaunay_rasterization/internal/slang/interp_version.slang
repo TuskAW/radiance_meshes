@@ -17,20 +17,9 @@ void print_verts(float4x3 verts) {
 void print_vec(float3 vec) {
     printf("(%f, %f, %f),", vec.x, vec.y, vec.z);
 }
-/* 
+
 [Differentiable]
-float3 compute_integral(float3 c0, float3 c1, float ddt) {
-    float alpha = safe_exp(-ddt);
-    if (ddt < 1e-6) {
-        return alpha * 0.5*(c0+c1);
-    }
-    float X = (-ddt*alpha + 1 - alpha);
-    float Y = ddt + alpha - 1;
-    return safe_div(X*c0+Y*c1, ddt);
-}
- */
-[Differentiable]
-float phi(float x) {
+inline float phi(float x) {
     if (abs(x) < 1e-6) {
         return 1.0f - x / 2.0f;
     }
@@ -39,7 +28,7 @@ float phi(float x) {
 }
 
 [Differentiable]
-float3 compute_integral(float3 c0, float3 c1, float ddt) {
+inline float3 compute_integral(float3 c0, float3 c1, float ddt) {
     float alpha = safe_exp(-ddt);
     
     float phi_val = phi(ddt);
@@ -51,19 +40,7 @@ float3 compute_integral(float3 c0, float3 c1, float ddt) {
 }
 
 [Differentiable]
-inline float3 mix_color(float4x3 vertex_color, float4 bary) {
-    return max(vertex_color[0] * bary.x + vertex_color[1] * bary.y + vertex_color[2] * bary.z + vertex_color[3] * bary.w, 0.f);
-}
-
-[Differentiable]
-inline float3 linear_color(float3 grad, float3 v)
-{
-    float f = dot(grad, v);
-    return {f, f, f};
-}
-
-[Differentiable]
-CtrlPt integrate_tetra_segment(
+inline CtrlPt integrate_tetra_segment(
     in SplatTetrahedra_interp g, 
     in float3 ray_o,
     in float3 ray_d,
@@ -75,8 +52,10 @@ CtrlPt integrate_tetra_segment(
 
     float3 v_enter = enter * ray_d + ray_o - g.tet.verts[0];
     float3 v_exit = exit * ray_d + ray_o - g.tet.verts[0];
-    float3 c_enter = max(linear_color(g.grd, v_enter) + g.base_color, 0.f);
-    float3 c_exit = max(linear_color(g.grd, v_exit) + g.base_color, 0.f);
+    // float3 c_enter = max(dot(g.grd, v_enter) + g.base_color, 0.f);
+    // float3 c_exit = max(dot(g.grd, v_exit) + g.base_color, 0.f);
+    float3 c_enter = dot(g.grd, v_enter) + g.base_color;
+    float3 c_exit = dot(g.grd, v_exit) + g.base_color;
 
     // float alpha = safe_clip(1.0f - safe_exp(-g.density * dt), 0.f, 1.f);
     float alpha = max(-safe_expm1(-g.density * dt), 0.f);
@@ -88,8 +67,9 @@ CtrlPt integrate_tetra_segment(
                     g.density * dt};
     return { rgba, {enter, exit}, g.density };
 }
+
 [Differentiable]
-bool evaluate_tetra_interp(
+inline bool evaluate_tetra_interp(
     in SplatTetrahedra_interp g, 
     in float3 ray_o,
     in float3 ray_d,
@@ -118,7 +98,7 @@ bool evaluate_tetra_interp(
 }
 
 [Differentiable]
-SplatTetrahedra_interp load_tet_alphablend_interp(
+inline SplatTetrahedra_interp load_tet_alphablend_interp(
     int32_t        g_idx,
     DiffTensorView vertices,
     TensorView<int32_t> indices,
@@ -145,7 +125,7 @@ SplatTetrahedra_interp load_tet_alphablend_interp(
     return result;
 }
 
-SplatTetrahedra_interp load_tet_alphablend_interp(
+inline SplatTetrahedra_interp load_tet_alphablend_interp(
     int32_t        g_idx,
     TensorView<float> vertices,
     TensorView<int32_t> indices,

@@ -239,6 +239,7 @@ class Model(BaseModel):
             radius = torch.linalg.norm(circumcenter - vertices[indices[start:end, 0]], dim=-1)
         if self.ablate_circumsphere:
             circumcenter = tets.mean(dim=1)
+            # radius = torch.linalg.norm(circumcenter - vertices[indices[start:end, 0]], dim=-1)
         if self.training:
             circumcenter += self.alpha*torch.randn_like(circumcenter) * radius.reshape(-1, 1)
         normalized = (circumcenter - self.center) / self.scene_scaling
@@ -348,9 +349,12 @@ class Model(BaseModel):
         print(ckpt.keys())
         vertices = ckpt['contracted_vertices']
         indices = ckpt["indices"]  # shape (N,4)
-        empty_indices = ckpt["empty_indices"]  # shape (N,4)
         del ckpt["indices"]
-        del ckpt["empty_indices"]
+        if 'empty_indices' in ckpt:
+            empty_indices = ckpt['empty_indices']
+            del ckpt['empty_indices']
+        else:
+            empty_indices = torch.empty((0, 4), dtype=indices.dtype, device=indices.device)
         print(f"Loaded {vertices.shape[0]} vertices")
         ext_vertices = ckpt['ext_vertices']
         model = Model(vertices.to(device), ext_vertices, ckpt['center'], ckpt['scene_scaling'], **config.as_dict())

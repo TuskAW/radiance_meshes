@@ -19,37 +19,40 @@ import safe_math;
 
 struct SplineState : IDifferentiable
 {
-  float2 distortion_parts;
-  float2 cum_sum;
+  float3 base_color;
   float depth;
-  float2 padding;
-  // Spline state
+
+  float3 grd;
   float t;
-  float4 drgb;
+
 
   // Volume Rendering State
-  float logT;
   float3 C;
+  float logT;
+
+  float3 padding;
+  float density;
 };
 
 SplineState make_empty_state() {
   return {
-    float2(0.f),
-    float2(0.f),
+    float3(0.f),
     0.f,
-    float2(0.f),
+    float3(0.f),
     0.f,
-    float4(0.0f),
-
-    0.0,
     float3(0.0f),
+    0.f,
+    float3(0.0f),
+    0.0,
   };
 }
 
 struct ControlPoint : IDifferentiable
 {
   float t;
-  float4 dirac;
+  float density;
+  float3 base_color;
+  float3 grd;
 }
 
 bool AlmostEqualRelative(float A, float B,
@@ -58,19 +61,38 @@ bool AlmostEqualRelative(float A, float B,
     return abs(A - B) <= max(abs(A), abs(B)) * maxRelDiff;
 }
 
-SplineState to_dual(in SplineState state, in ControlPoint ctrl_pt)
+[Differentiable]
+inline float3 linear_color(float3 grad, float3 v)
 {
-  SplineState dual_state = state;
-  return dual_state;
+    float f = dot(grad, v);
+    return {f, f, f};
 }
 
-SplineState from_dual(in SplineState state, in ControlPoint ctrl_pt)
-{
-  SplineState dual_state = state;
-  return dual_state;
+[Differentiable]
+float phi(float x) {
+    if (abs(x) < 1e-6) {
+        return 1.0f - x / 2.0f;
+    }
+    // return (1.0f - exp(-x)) / x;
+    return -(safe_expm1(-x)) / x;
+}
+
+
+[Differentiable]
+float3 compute_integral(float3 c0, float3 c1, float ddt) {
+    float alpha = safe_exp(-ddt);
+    
+    float phi_val = phi(ddt);
+    
+    float w0 = phi_val - alpha;
+    float w1 = 1.0f - phi_val;
+    
+    return w0 * c0 + w1 * c1;
 }
 
 SplineState inverse_update_dual(
+    in float3 ray_o,
+    in float3 ray_d,
     in SplineState new_state,
     in ControlPoint new_ctrl_pt,
     in ControlPoint ctrl_pt,
@@ -81,27 +103,27 @@ SplineState inverse_update_dual(
   const float dt = max(new_state.t - t, 0.f);
 
   SplineState state = {};
-  state.drgb = ctrl_pt.dirac;
-
+  state.density = ctrl_pt.density;
+  state.base_color = ctrl_pt.base_color;
+  state.grd = ctrl_pt.grd;
   state.t = t;
 
-  float4 drgb = state.drgb;
+  let area = max(state.density * dt, 0.f);
 
-  let avg = drgb;
-  float area = max(avg.x * dt, 0.f);
-  let rgb_norm = safe_div(float3(avg.y, avg.z, avg.w), avg.x);
+  new_state.logT = max(area + state.logT, 0.f);
+  
+  float3 c_enter = max(linear_color(state.grd, ray_d) + state.base_color, 0.f);
+  float3 c_exit = max(linear_color(state.grd, ray_d) + state.base_color, 0.f);
+  float3 final_color = compute_integral(c_exit, c_enter, dt*state.density);
+  float alpha = max(-safe_expm1(-state.density * dt), 0.f);
+  state.C = new_state.C - final_color;
 
-  state.logT = max(new_state.logT - area, 0.f);
-  const float weight = clip((1-safe_exp(-area)) * safe_exp(-state.logT), 0.f, 1.f);
-
-  state.C = new_state.C - weight * rgb_norm;
   const float AREA_THRESHOLD = 1e-6f;
   float segment_depth_val;
-  float alpha = -safe_expm1(-area);
-  if (avg.x < AREA_THRESHOLD) {
+  if (state.density < AREA_THRESHOLD) {
       segment_depth_val = alpha * t + (1-alpha) * state.t;
   } else {
-      segment_depth_val = safe_div(1.f, avg.x) * (-safe_expm1(-area)) 
+      segment_depth_val = safe_div(1.f, state.density) * (-safe_expm1(-area)) 
                         - (t + t_min) * safe_exp(-area) 
                         + (state.t + t_min);
   }
@@ -109,20 +131,14 @@ SplineState inverse_update_dual(
   const float segment_depth = max(segment_depth_val, 0.f);
   new_state.depth = state.depth - safe_exp(-state.logT) * segment_depth;
 
-  // Distortion Loss
-  // make sure this is the right t. I believe this is correct.
-  let m = tukey_power_ladder((new_state.t+state.t)/2 * PRE_MULTI, LADDER_P);
-  state.cum_sum.x = new_state.cum_sum.x - weight;
-  state.cum_sum.y = new_state.cum_sum.y - weight * m;
-  state.distortion_parts.x = new_state.distortion_parts.x - 2 * weight * m * state.cum_sum.x;
-  state.distortion_parts.y = new_state.distortion_parts.y - 2 * weight * state.cum_sum.y;
-
   return state;
 }
 
 
 [Differentiable]
 SplineState update(
+    in float3 ray_o,
+    in float3 ray_d,
     in SplineState state,
     in ControlPoint ctrl_pt,
     no_diff in float t_min,
@@ -132,42 +148,34 @@ SplineState update(
   const float dt = max(t - state.t, 0.f);
 
   SplineState new_state;
-  new_state.drgb = ctrl_pt.dirac;
+  new_state.density = ctrl_pt.density;
+  new_state.base_color = ctrl_pt.base_color;
+  new_state.grd = ctrl_pt.grd;
   new_state.t = t;
 
-  float4 drgb = state.drgb;
-
-  let avg = drgb;
-  let area = max(avg.x * dt, 0.f);
-
-  let rgb_norm = safe_div(float3(avg.y, avg.z, avg.w), avg.x);
+  let area = max(state.density * dt, 0.f);
 
   new_state.logT = max(area + state.logT, 0.f);
-  float alpha = -safe_expm1(-area);
-  const float weight = clip(alpha * safe_exp(-state.logT), 0.f, 1.f);
-  new_state.C = state.C + weight * rgb_norm;
+
+  float3 c_enter = max(linear_color(state.grd, ray_o+ray_d*state.t) + state.base_color, 0.f);
+  float3 c_exit = max(linear_color(state.grd, ray_o+ray_d*t) + state.base_color, 0.f);
+  float3 final_color = compute_integral(c_exit, c_enter, dt*state.density);
+  float alpha = max(-safe_expm1(-state.density * dt), 0.f);
+
+  new_state.C = state.C + safe_exp(-state.logT)*final_color;
 
   const float AREA_THRESHOLD = 1e-6f;
   float segment_depth_val;
-  if (avg.x < AREA_THRESHOLD) {
+  if (state.density < AREA_THRESHOLD) {
       segment_depth_val = alpha * t + (1-alpha) * state.t;
   } else {
-      segment_depth_val = safe_div(1.f, avg.x) * (-safe_expm1(-area)) 
+      segment_depth_val = safe_div(1.f, state.density) * (-safe_expm1(-area)) 
                         - (t + t_min) * safe_exp(-area) 
                         + (state.t + t_min);
   }
 
   const float segment_depth = max(segment_depth_val, 0.f);
   new_state.depth = state.depth + safe_exp(-state.logT) * segment_depth;
-
-
-  // Distortion Loss
-  // make sure this is the right t. I believe this is correct.
-  let m = tukey_power_ladder((new_state.t+state.t)/2 * PRE_MULTI, LADDER_P);
-  new_state.distortion_parts.x = state.distortion_parts.x + 2 * weight * m * state.cum_sum.x;
-  new_state.distortion_parts.y = state.distortion_parts.y + 2 * weight * state.cum_sum.y;
-  new_state.cum_sum.x = state.cum_sum.x + weight;
-  new_state.cum_sum.y = state.cum_sum.y + weight * m;
 
   return new_state;
 }
@@ -184,7 +192,7 @@ SplineOutput extract_color(in SplineState state) {
   return {
     state.C,
     state.depth,
-    state.distortion_parts.x - state.distortion_parts.y
+    0.f
   };
 }
 

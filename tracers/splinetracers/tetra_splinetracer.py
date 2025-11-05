@@ -1,17 +1,3 @@
-# coding=utf-8
-# Copyright 2024 Google LLC
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
 import time
 from pathlib import Path
 from typing import *
@@ -165,6 +151,39 @@ def get_tet_adjacency(tets: torch.Tensor):
 
     return faces, side_index
 
+class FastTracer:
+    def __init__(self, vertices, face_indices, side_index, density, features, lookup_tool, tmin=0, tmax=1000, max_iters=200):
+        self.face_indices = face_indices.to(torch.uint32)
+        self.side_index = side_index.int().contiguous()
+        # ic(side_index[25], face_indices[25], indices[13], rayo[0], rayd[0])
+        # print(time.time()-st)
+        self.density = density.contiguous()
+        self.face_indices = face_indices.contiguous()
+        self.vertices = vertices.contiguous()
+        self.features = features.contiguous()
+
+        self.device = vertices.device
+        st = time.time()
+        # otx = sp.OptixContext(self.device)
+        self.prims = sp.Primitives(self.device)
+        self.prims.add_primitives(self.vertices, self.face_indices, self.side_index, self.density, self.features)
+        self.gas = sp.GAS(otx, self.device, self.prims, True, False, True)
+
+        self.forward = sp.Forward(otx, self.device, self.prims, True)
+        self.lookup_tool = lookup_tool
+        self.tmin = tmin
+        self.tmax = tmax
+        self.max_iters = max_iters
+        
+    def trace(self, features, rayo, rayd):
+        start_tet_ids = self.lookup_tool.lookup(rayo[0].reshape(1, 3).cuda())
+        start_tet_ids = start_tet_ids * torch.ones((rayo.shape[0]), dtype=torch.int, device='cuda')
+        self.prims.set_features(features)
+        self.forward.update_model(self.prims)
+        out = self.forward.trace_rays(
+            self.gas, rayo.contiguous(), rayd.contiguous(), self.tmin, self.tmax, self.max_iters, start_tet_ids.contiguous())
+        return out["color"]
+
 # Inherit from Function
 class SplineTracer(Function):
     # Note that forward, setup_context, and backward are @staticmethods
@@ -172,12 +191,12 @@ class SplineTracer(Function):
     def forward(
         ctx: Any,
         vertices: torch.Tensor,
+        indices: torch.Tensor,
         face_indices: torch.Tensor,
         side_index: torch.Tensor,
         density: torch.Tensor,
-        color: torch.Tensor,
-        rayo: torch.Tensor,
-        rayd: torch.Tensor,
+        features: torch.Tensor,
+        rayo: torch.Tensor, rayd: torch.Tensor,
         tmin: float,
         tmax: float,
         max_iters: int,
@@ -190,26 +209,34 @@ class SplineTracer(Function):
         ctx.prims = sp.Primitives(ctx.device)
         assert density.device == ctx.device
         density = density.contiguous()
-        color = color.contiguous()
+        face_indices = face_indices.contiguous()
+        vertices = vertices.contiguous()
 
         # assume all same start. Not strictly necessary
+        st = time.time()
         start_tet_ids = lookup_tool.lookup(rayo[0].reshape(1, 3).cuda())
         start_tet_ids = start_tet_ids * torch.ones((rayo.shape[0]), dtype=torch.int, device='cuda')
-        face_indices = face_indices.int()
+        face_indices = face_indices.to(torch.uint32)
         side_index = side_index.int()
+        # ic(side_index[25], face_indices[25], indices[13], rayo[0], rayd[0])
+        # print(time.time()-st)
 
-        ctx.prims.add_primitives(vertices, face_indices, side_index, density, color)
-
+        st = time.time()
+        ctx.prims.add_primitives(vertices, face_indices, side_index, density, features)
         ctx.gas = sp.GAS(otx, ctx.device, ctx.prims, True, False, True)
 
         ctx.forward = sp.Forward(otx, ctx.device, ctx.prims, True)
+        # print(time.time()-st)
+        st = time.time()
         ctx.max_iters = max_iters
         out = ctx.forward.trace_rays(
             ctx.gas, rayo, rayd, tmin, tmax, ctx.max_iters, start_tet_ids)
+        # print(time.time()-st)
         ctx.saved = out["saved"]
         ctx.tmin = tmin
         ctx.tmax = tmax
         tri_collection = out["tri_collection"]
+        # ic(tri_collection.reshape(ctx.max_iters, -1)[:, 0][:8])
 
         states = ctx.saved.states.reshape(rayo.shape[0], -1)
         distortion_pt1 = states[:, 0]
@@ -218,7 +245,7 @@ class SplineTracer(Function):
         color_and_loss = torch.cat([out["color"], distortion_loss.reshape(-1, 1)], dim=1)
 
         ctx.save_for_backward(
-            vertices, face_indices, side_index, density, color, rayo, rayd, tri_collection, start_tet_ids
+            vertices, face_indices, side_index, density, features, rayo, rayd, tri_collection, start_tet_ids
         )
 
         if return_extras:
@@ -268,7 +295,7 @@ class SplineTracer(Function):
 
             dual_model = (
                 vertices,
-                face_indices,
+                face_indices.int(),
                 side_index,
                 density,
                 features,
@@ -309,6 +336,7 @@ class SplineTracer(Function):
             dL_dvertices.clip(min=-mean_v, max=mean_v),
             None,
             None,
+            None,
             dL_ddensities.clip(min=-v, max=v).reshape(density.shape),
             dL_dfeatures.clip(min=-v, max=v),
             dL_drayo.clip(min=-v, max=v),
@@ -320,9 +348,9 @@ class SplineTracer(Function):
             None
         )
 
-
 def trace_rays(
     vertices: torch.Tensor,
+    indices: torch.Tensor,
     face_indices: torch.Tensor,
     side_index: torch.Tensor,
     density: torch.Tensor,
@@ -337,6 +365,7 @@ def trace_rays(
 ):
     out = SplineTracer.apply(
         vertices,
+        indices,
         face_indices,
         side_index,
         density,

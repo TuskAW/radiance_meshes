@@ -101,6 +101,7 @@ class Forward {
                     SplineState *last_state=NULL,
                     int *tri_collection=NULL,
                     int *start_tet_ids=NULL);
+   void reset_features(const Primitives &model);
    bool enable_backward = false;
    size_t num_prims = 0;
    private:

@@ -130,18 +130,24 @@ def test_tetrahedra_rendering(vertices, indices, cell_values, tet_density, viewm
     model.mask_values = False
 
     rays = camera.to_rays().cuda()
-    cpos = camera.camera_center
 
     lookup = TetrahedraLookup(model.indices, model.vertices, 256)
     # start_tet_ids = find_point_tetrahedron_sl(cpos.reshape(1, 3).cuda(), model.vertices, model.indices).int()
+
+    features = cell_values[:, 1:]
+    grd = features[..., 3:]
+    # offset = ((rays[0, :3].reshape(1, 3) - vertices[indices[..., 0]]) * grd).sum(dim=1, keepdim=True)
+    offset = (( - vertices[indices[..., 0]]) * grd).sum(dim=1, keepdim=True)
+    base_color = features[..., :3] + offset
+    features = torch.cat([base_color, grd], dim=1).contiguous()
     face_indices, side_index = get_tet_adjacency(model.indices)
-    ic(model.indices, face_indices, model.vertices)
     output_img = trace_rays(
             model.vertices,
+            indices,
             face_indices,
             side_index,
             cell_values[:, :1].contiguous(),
-            cell_values[:, 1:].contiguous(),
+            features.contiguous(),
             rays[:, :3].contiguous(),
             rays[:, 3:].contiguous(),
             tmin,
@@ -152,12 +158,14 @@ def test_tetrahedra_rendering(vertices, indices, cell_values, tet_density, viewm
     
     vc = cell_values[:, 1:].reshape(-1, 6)
     td = cell_values[:, :1]
-    jax_image, extras = tetra_quad.render_camera(
+    jax_image, extras = tetra_quad.render_rays(
         vertices.detach().cpu().numpy(), indices.cpu().numpy(),
         vc.detach().cpu().numpy(),
         td.detach().cpu().numpy(),
-        height, width, viewmat.cpu().numpy(),
-        fx.item(), fy.item(), tmin, np.linspace(0, 1, n_samples))
+        rays[:, :3].cpu().numpy().reshape(height, width, 3),
+        rays[:, 3:].cpu().numpy().reshape(height, width, 3),
+        viewmat.cpu().numpy(),
+        tmin, np.linspace(0, 1, n_samples))
 
     # Compare results
     # ic(jax_image.shape, torch_image)
