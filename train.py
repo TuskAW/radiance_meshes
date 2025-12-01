@@ -91,7 +91,7 @@ args.L = 8
 args.hashmap_dim = 8
 args.base_resolution = 64
 args.density_offset = -4
-args.lambda_weight_decay = 0.1
+args.lambda_weight_decay = 1
 args.percent_alpha = 0.0 # preconditioning
 args.spike_duration = 500
 
@@ -126,7 +126,7 @@ args.densify_end = 16000
 args.densify_interval = 500
 args.budget = 2_000_000
 args.within_thresh = 2.0
-args.total_thresh = 5.0
+args.total_thresh = 2.0
 args.clone_min_contrib = 0.003
 args.split_min_contrib = 0.003
 
