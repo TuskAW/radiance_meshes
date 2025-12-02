@@ -1,4 +1,18 @@
-This is the training code for 3DDR (3D Delaunay Rasterization). The viewing code is [here](https://github.com/Shmaug/DelTetRenderer) and the web viewer source code [here](https://github.com/half-potato/dsplat_web).
+# Radiance Meshes for Volumetric Reconstruction
+This is the training code for Radiance Meshes. The viewing code is [here](https://github.com/half-potato/vkrm) and the web viewer source code [here](https://github.com/half-potato/webrm).
+
+![](assets/frontpage.png)
+
+Datasets:
+[mipnerf360pt1](http://storage.googleapis.com/gresearch/refraw360/360_v2.zip), 
+[mipnerf360pt2](https://storage.googleapis.com/gresearch/refraw360/360_extra_scenes.zip), 
+[zipnerf](https://smerf-3d.github.io/)
+
+More details can be found on our [website](https://half-potato.gitlab.io/rm/)
+
+# Requirements
+- NVIDIA GPU with 24GB or less of VRAM. Settings can be adjusted for lower amounts of VRAM. Reduce `--log2_hashmap_size`.
+- Training code has only been tested on Linux. `uv` is known to have issues on Windows.
 
 # Install
 Install UV [here](https://github.com/astral-sh/uv).
@@ -7,9 +21,6 @@ uv pip install setuptools
 uv pip install torch
 ```
 Dependencies:
-```
-sudo apt install gnuplot
-```
 Then, it is as simple as running the command `uv run` instead of python to run the code. It installs everything super quickly.
 Example running command for bonsai:
 ```
@@ -25,3 +36,27 @@ To obtain a reduced model for mobile viewing, we recommend the following paramet
  - `--iterations 10000` Train for a shorter amount of time
  - `--freeze_start 8000` Freeze earlier to reflect shorter training time
  - `--alpha_threshold 0 --density_threshold 0` For underwater scenes
+ 
+ # Fisheye Lenses
+Fisheye rendering is supported, fisheye training "works" but something seems a little wrong with the quality.
+
+# Ray tracing
+Ray tracing is just a few steps away from being differentiable. Should speed up training.
+ 
+ # Training on new Scenes
+Put your set of images into a folder named `$DATASET/input`. Then run
+```
+python convert.py -s $DATASET --resize
+```
+Alternatively, you can use the `Export for Gaussian Splatting` option in Agisoft Metashape, as we use the same dataset format.
+Finally, you can train using the following command
+```
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True uv run train.py --dataset_path $DATASET --image_folder images_4 --output_path output/my_dataset
+```
+
+# Benchmarking
+To run our method on all datasets, you can edit the `scripts/run_full.csv` file to change the dataset paths, then run:
+```
+python hyperparam.py  --queue_csv scripts/run_full.csv --output_csv results/run_full_r46.csv --gpus 1,2,3 --suffix _r46
+```
+This is a general purpose script for running and collecting results across different parameters.
