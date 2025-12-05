@@ -54,6 +54,13 @@ Finally, you can train using the following command
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True uv run train.py --dataset_path $DATASET --image_folder images_4 --output_path output/my_dataset
 ```
 
+# Mesh extraction
+Example command:
+```
+uv run extract_mesh.py --output_path output/bicycle_ifimages_4_r41 --dataset_path /data/nerf_datasets/360/bicycle --contrib_threshold 0.45 
+```
+`--contrib_threshold` is the threshold at which a cell is added to the mesh. The resulting `.ply` files can be viewed with color in Blender. I have provided the `scripts/base.blend` with shaders that will colorize the mesh. To use it, import the ply file into the `base.blend` file, then adjust the material to the existing one.
+
 # Benchmarking
 To run our method on all datasets, you can edit the `scripts/run_full.csv` file to change the dataset paths, then run:
 ```
