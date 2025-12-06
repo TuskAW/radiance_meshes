@@ -67,3 +67,6 @@ To run our method on all datasets, you can edit the `scripts/run_full.csv` file 
 python hyperparam.py  --queue_csv scripts/run_full.csv --output_csv results/run_full_r46.csv --gpus 1,2,3 --suffix _r46
 ```
 This is a general purpose script for running and collecting results across different parameters.
+
+# Licensing
+The `data/colmap_loader.py` contains a minor amount of 3DGS code. Should be trivial to replace.

@@ -23,6 +23,22 @@
 
 import torch
 
+import torch
+
+def weigh_degree(sh_coeffs: torch.Tensor, values: list[float]) -> torch.Tensor:
+    C = sh_coeffs.shape[1]
+    device = sh_coeffs.device
+    
+    # Calculate degree for each index: l = floor(sqrt(i))
+    indices = torch.arange(C, device=device, dtype=torch.float32)
+    degrees = torch.floor(torch.sqrt(indices)).long()
+    
+    # Map degrees to the provided values
+    values_tensor = torch.tensor(values, device=device, dtype=sh_coeffs.dtype)
+    output = values_tensor[degrees]
+    
+    return output.view(1, C, 1)
+
 C0 = 0.28209479177387814
 C1 = 0.4886025119029199
 C2 = [

@@ -7,6 +7,7 @@ from delaunay_rasterization.internal.alphablend_tiled_slang_interp import AlphaB
 from delaunay_rasterization.internal.render_grid import RenderGrid
 from delaunay_rasterization.internal.tile_shader_slang import vertex_and_tile_shader
 from delaunay_rasterization.internal.alphablend_tiled_slang import render_constant_color
+from utils.eval_sh_py import weigh_degree
 import time
 
 cmap = plt.get_cmap("jet")
@@ -49,7 +50,8 @@ def render(camera: Camera, model, cell_values=None, tile_size=16, min_t=0.1,
             cell_values[mask] = values
         else:
             shs, cell_values = model.get_cell_values(camera, all_circumcenters=circumcenter)
-        sh_reg = (shs**2).mean()
+        weighting = weigh_degree(shs, [0, 0.1, 0.5, 1])
+        sh_reg = ((weighting * shs)**2).mean()
 
     image_rgb, distortion_img, tet_alive = AlphaBlendTiledRender.apply(
         sorted_tetra_idx,
