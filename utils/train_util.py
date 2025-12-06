@@ -9,6 +9,7 @@ from delaunay_rasterization.internal.tile_shader_slang import vertex_and_tile_sh
 from delaunay_rasterization.internal.alphablend_tiled_slang import render_constant_color
 from utils.eval_sh_py import weigh_degree
 import time
+from icecream import ic
 
 cmap = plt.get_cmap("jet")
 

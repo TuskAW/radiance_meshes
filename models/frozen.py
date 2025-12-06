@@ -185,7 +185,8 @@ class FrozenTetModel(BaseModel):
             rgb      = self.rgb
             sh       = self.sh
 
-        return circumcenter, density, rgb, grd, sh
+        sh_dim = (self.max_sh_deg+1)**2 - 1
+        return circumcenter, density, rgb, grd, sh.reshape(-1, sh_dim, 3)
 
     def compute_features(self, offset=False):
         vertices = self.vertices
